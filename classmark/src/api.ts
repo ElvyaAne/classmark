@@ -1,5 +1,5 @@
-// Thin client for Supabase Auth (anonymous sign-in) and PostgREST RPC calls.
-// No SDK needed: the app only uses six database functions.
+// Thin client for Supabase Auth (email one-time codes) and PostgREST RPC calls.
+// No SDK needed: the app only uses a handful of database functions.
 
 export interface School {
   slug: string;
@@ -7,6 +7,7 @@ export interface School {
   country: string;
   gpa_scale: number;
   responses: number;
+  email_domains: string[];
 }
 
 export const PROGRAMS = [
@@ -47,10 +48,25 @@ export type MetricKey =
 export interface PeerStats {
   n: number;
   min_n: number;
-  metrics: Partial<Record<MetricKey, number[] | null>> | null;
+  /** true when the group is big enough but hidden because a wider group differs by under 5 people */
+  suppressed?: boolean;
+  metrics: Partial<Record<MetricKey, number[]>> | null;
 }
 
-interface Session {
+export interface AverageStudent {
+  n: number;
+  min_n: number;
+  suppressed?: boolean;
+  averages: Partial<Record<MetricKey, number>> | null;
+}
+
+export interface Me {
+  email: string;
+  verified: boolean;
+  school_slug: string | null;
+}
+
+export interface Session {
   access_token: string;
   refresh_token: string;
   expires_at: number; // unix seconds
@@ -67,7 +83,8 @@ const SESSION_KEY = "classmark.session";
 function readSession(): Session | null {
   try {
     const raw = localStorage.getItem(SESSION_KEY);
-    return raw ? (JSON.parse(raw) as Session) : null;
+    const s = raw ? (JSON.parse(raw) as Session) : null;
+    return s && typeof s.access_token === "string" && typeof s.refresh_token === "string" ? s : null;
   } catch {
     return null;
   }
@@ -79,6 +96,45 @@ function writeSession(s: Session | null) {
   } catch {
     /* private mode: session lasts for this tab only */
   }
+}
+
+/** Lower-cased domain of an email address, or null if it doesn't look like one. */
+export function emailDomain(email: string): string | null {
+  const m = /^[^\s@]+@([^\s@]+\.[^\s@]+)$/.exec(email.trim());
+  return m ? m[1].toLowerCase() : null;
+}
+
+/** The listed school an email belongs to (same rule as the database: exact domain or a subdomain). */
+export function schoolForEmail(email: string, schools: School[]): School | null {
+  const host = emailDomain(email);
+  if (!host) return null;
+  return schools.find((s) => s.email_domains.some((d) => host === d || host.endsWith("." + d))) ?? null;
+}
+
+/**
+ * Reads a session from a magic-link redirect (#access_token=…&refresh_token=…) if the
+ * person clicked the link in the email instead of typing the code. Returns an error message
+ * when the link was expired or already used.
+ */
+export function sessionFromUrlHash(hash: string): { session?: Session; error?: string } | null {
+  if (!hash || hash.length < 2) return null;
+  const p = new URLSearchParams(hash.replace(/^#/, ""));
+  if (p.get("error") || p.get("error_description")) {
+    return { error: p.get("error_description")?.replace(/\+/g, " ") || "That sign-in link didn't work. Request a new code." };
+  }
+  const access = p.get("access_token");
+  const refresh = p.get("refresh_token");
+  if (!access || !refresh) return null;
+  const expiresAt = Number(p.get("expires_at")) || Math.floor(Date.now() / 1000) + (Number(p.get("expires_in")) || 3600);
+  return { session: { access_token: access, refresh_token: refresh, expires_at: expiresAt } };
+}
+
+function friendly(msg: string, status: number): string {
+  if (/database error saving new user/i.test(msg)) return "Use your school email address. Only listed schools can sign in.";
+  if (/token has expired or is invalid|otp.*(expired|invalid)/i.test(msg)) return "That code is wrong or expired. Check the latest email, or send a new code.";
+  if (status === 429 || /rate limit|security purposes/i.test(msg)) return "Too many tries. Wait a minute, then try again.";
+  if (/captcha/i.test(msg)) return "The robot check didn't go through. Try again.";
+  return msg;
 }
 
 export function createApi(url: string, anonKey: string, fetchImpl: typeof fetch = fetch.bind(globalThis)) {
@@ -96,10 +152,15 @@ export function createApi(url: string, anonKey: string, fetchImpl: typeof fetch 
       body: JSON.stringify(body ?? {}),
     });
     const text = await res.text();
-    const data = text ? JSON.parse(text) : null;
+    let data: any = null;
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch {
+      data = null;
+    }
     if (!res.ok) {
       const msg = data?.message || data?.msg || data?.error_description || `Request failed (${res.status})`;
-      throw new ApiError(msg, res.status, data?.code);
+      throw new ApiError(friendly(String(msg), res.status), res.status, data?.code ?? data?.error_code);
     }
     return data as T;
   }
@@ -112,41 +173,75 @@ export function createApi(url: string, anonKey: string, fetchImpl: typeof fetch 
     };
   }
 
-  /** Returns a valid access token, refreshing it, or signing in anonymously when `create` is true. */
-  async function token(create: boolean): Promise<string | null> {
+  function setSession(s: Session | null) {
+    session = s;
+    writeSession(s);
+  }
+
+  /** A valid access token (refreshed if needed), or null when signed out. */
+  async function token(): Promise<string | null> {
     const now = Math.floor(Date.now() / 1000);
     if (session && session.expires_at - 60 > now) return session.access_token;
     if (session) {
       try {
-        session = toSession(await request("/auth/v1/token?grant_type=refresh_token", { refresh_token: session.refresh_token }));
-        writeSession(session);
-        return session.access_token;
+        setSession(toSession(await request("/auth/v1/token?grant_type=refresh_token", { refresh_token: session.refresh_token })));
+        return session!.access_token;
       } catch {
-        session = null;
-        writeSession(null);
+        setSession(null);
       }
     }
-    if (!create) return null;
-    session = toSession(await request("/auth/v1/signup", { data: {} }));
-    writeSession(session);
-    return session.access_token;
+    return null;
   }
 
   const rpc = async <T>(fn: string, args: object, auth: "none" | "if-signed-in" | "required" = "none") => {
-    const t = auth === "none" ? undefined : (await token(auth === "required")) ?? undefined;
-    return request<T>(`/rest/v1/rpc/${fn}`, args, t);
+    const t = auth === "none" ? null : await token();
+    if (auth === "required" && !t) throw new ApiError("Sign in with your school email first.", 401);
+    return request<T>(`/rest/v1/rpc/${fn}`, args, t ?? undefined);
   };
 
   return {
-    hasSession: () => session !== null,
+    isSignedIn: () => session !== null,
+
+    /** Emails a one-time code (and a sign-in link) to a school address. */
+    sendCode: (email: string, captchaToken?: string) =>
+      request<unknown>("/auth/v1/otp", {
+        email: email.trim(),
+        create_user: true,
+        ...(captchaToken ? { gotrue_meta_security: { captcha_token: captchaToken } } : {}),
+      }).then(() => undefined),
+
+    /** Exchanges the emailed code for a session. */
+    verifyCode: async (email: string, code: string) => {
+      const d = await request<{ access_token: string; refresh_token: string; expires_in?: number; expires_at?: number }>(
+        "/auth/v1/verify", { type: "email", email: email.trim(), token: code.replace(/\s+/g, "") });
+      setSession(toSession(d));
+    },
+
+    /** Adopts a session from a magic-link redirect. */
+    adoptSession: (s: Session) => setSession(s),
+
+    signOut: async () => {
+      const t = session?.access_token;
+      setSession(null);
+      if (t) await request("/auth/v1/logout", {}, t).catch(() => undefined);
+    },
+
     listSchools: () => rpc<School[]>("list_schools", {}),
+    averageStudent: (school: string | null, program: string | null, year: number | null) =>
+      rpc<AverageStudent>("average_student", { p_school: school, p_program: program, p_year: year }),
+    whoami: async () => ((await token()) ? rpc<Me | null>("whoami", {}, "required") : null),
     peerStats: (school: string | null, program: string | null, year: number | null) =>
-      rpc<PeerStats>("peer_stats", { p_school: school, p_program: program, p_year: year }, "if-signed-in"),
-    getMyResponse: async () => (session ? rpc<SavedResponse | null>("get_my_response", {}, "if-signed-in") : null),
+      rpc<PeerStats>("peer_stats", { p_school: school, p_program: program, p_year: year }, "required"),
+    getMyResponse: () => rpc<SavedResponse | null>("get_my_response", {}, "required"),
     saveMyResponse: (r: ResponseInput) => rpc<SavedResponse>("save_my_response", { p: r }, "required"),
     deleteMyResponse: () => rpc<null>("delete_my_response", {}, "required"),
-    requestSchool: (slug: string, name: string, gpaScale: number, country: string) =>
-      rpc<"requested" | "exists">("request_school", { p_slug: slug, p_name: name, p_gpa_scale: gpaScale, p_country: country }, "required"),
+    deleteMyAccount: async () => {
+      await rpc<null>("delete_my_account", {}, "required");
+      setSession(null);
+    },
+    requestSchool: (slug: string, name: string, gpaScale: number, emailDomain: string, country: string) =>
+      rpc<"requested" | "exists">("request_school",
+        { p_slug: slug, p_name: name, p_gpa_scale: gpaScale, p_email_domain: emailDomain, p_country: country }, "if-signed-in"),
   };
 }
 export type Api = ReturnType<typeof createApi>;

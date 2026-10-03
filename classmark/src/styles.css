@@ -120,4 +120,25 @@ summary { cursor: pointer; font-weight: 700; }
 details > div { margin-top: 12px; }
 footer { border-top: 1px solid var(--line); padding-top: 18px; max-width: 70ch; }
 
+/* sign-in + account */
+.join { border-color: color-mix(in srgb, var(--accent) 35%, var(--line)); }
+.signin-row { display: flex; gap: 10px; align-items: end; flex-wrap: wrap; }
+.signin-row .field { flex: 1 1 240px; }
+.signin-row button { flex: 0 0 auto; }
+input.code { font: 600 20px var(--f-mono); letter-spacing: 0.3em; max-width: 220px; }
+button.link { background: none; border: 0; padding: 0; color: var(--accent); font-weight: 700; text-decoration: underline; cursor: pointer; }
+button.link:disabled { color: var(--ink-3); text-decoration: none; }
+.captcha:empty { display: none; }
+.account { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.account b { overflow-wrap: anywhere; }
+.locked { padding: 8px 10px; border: 1px dashed var(--line); border-radius: 6px; color: var(--ink-2); }
+.field .label { font-size: 12px; color: var(--ink-2); }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+details.panel { border-top: 1px solid var(--line); padding-top: 20px; }
+
+/* average student rows (signed out) */
+.avg { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.avg .val { font-size: 18px; }
+@media (max-width: 620px) { .avg-row .avg { grid-column: 1 / -1; order: 3; } }
+
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
