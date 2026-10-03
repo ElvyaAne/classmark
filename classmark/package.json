@@ -3,13 +3,14 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Anonymous peer benchmark for CS and adjacent students: see your percentile on each metric among students at your school, program and year.",
+  "description": "Peer benchmark for CS and adjacent students: verify with your school email and see your percentile on each metric among students at your school, program and year.",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "tsx --test test/*.test.ts",
-    "test:db": "bash test/run_db_tests.sh"
+    "test:db": "bash test/run_db_tests.sh",
+    "test:e2e": "bash test/e2e/run.sh"
   },
   "dependencies": {
     "react": "^19.0.0",

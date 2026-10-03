@@ -3,3 +3,5 @@ dist
 .env
 .env.local
 *.log
+test/e2e/dist
+test/e2e/shots
