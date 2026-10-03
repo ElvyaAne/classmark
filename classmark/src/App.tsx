@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { PROGRAMS, type Api, type PeerStats, type ResponseInput, type SavedResponse, type School } from "./api";
-import { MIN_PEERS, gaps, ordinal, overall, scoreMetrics, type MetricResult } from "./stats";
+import {
+  PROGRAMS, sessionFromUrlHash,
+  type AverageStudent, type Api, type Me, type PeerStats, type ResponseInput, type SavedResponse, type School,
+} from "./api";
+import { METRICS, MIN_PEERS, gaps, ordinal, overall, scoreMetrics, type Metric, type MetricResult } from "./stats";
 import { REFERENCES } from "./references";
 import { StripChart } from "./components/StripChart";
 import { ProfileForm } from "./components/ProfileForm";
 import { RequestSchool } from "./components/RequestSchool";
+import { SignIn } from "./components/SignIn";
 
 interface Filters {
   school: string; // slug or "all"
@@ -20,73 +24,116 @@ function initialSchoolFromUrl(): string | null {
   }
 }
 
-export function App({ api }: { api: Api | null }) {
+export function App({ api, captchaKey }: { api: Api | null; captchaKey?: string }) {
   if (!api) return <SetupNotice />;
-  return <Classmark api={api} />;
+  return <Classmark api={api} captchaKey={captchaKey} />;
 }
 
-function Classmark({ api }: { api: Api }) {
+function Classmark({ api, captchaKey }: { api: Api; captchaKey?: string }) {
   const [schools, setSchools] = useState<School[] | null>(null);
-  const [me, setMe] = useState<SavedResponse | null>(null);
+  const [who, setWho] = useState<Me | null>(null);
+  const [mine, setMine] = useState<SavedResponse | null>(null);
   const [filters, setFilters] = useState<Filters | null>(null);
   const [stats, setStats] = useState<PeerStats | null>(null);
+  const [avg, setAvg] = useState<AverageStudent | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [authNotice, setAuthNotice] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [confirmLeave, setConfirmLeave] = useState(false);
 
-  // initial load: schools + this browser's saved response (if any)
+  const verified = !!(who?.verified && who.school_slug);
+
+  /** Who is signed in, and their saved numbers. Returns the filters to start on. */
+  const loadIdentity = useCallback(async (list: School[]): Promise<Filters> => {
+    const me = await api.whoami().catch(() => null);
+    const ok = !!(me?.verified && me.school_slug);
+    const saved = ok ? await api.getMyResponse().catch(() => null) : null;
+    setWho(me);
+    setMine(saved);
+    if (saved) return { school: saved.school_slug, program: saved.program, year: String(saved.year) };
+    if (ok) return { school: me!.school_slug!, program: "all", year: "all" };
+    const fromUrl = initialSchoolFromUrl();
+    return { school: list.some((s) => s.slug === fromUrl) ? fromUrl! : list[0]?.slug ?? "all", program: "all", year: "all" };
+  }, [api]);
+
+  // initial load: pick up a magic-link session if there is one, then schools + identity
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      const fromLink = sessionFromUrlHash(window.location.hash);
+      if (fromLink) {
+        if (fromLink.session) api.adoptSession(fromLink.session);
+        if (fromLink.error) setAuthNotice(fromLink.error);
+        history.replaceState(null, "", window.location.pathname + window.location.search);
+      }
       try {
-        const [list, mine] = await Promise.all([api.listSchools(), api.getMyResponse().catch(() => null)]);
+        const list = await api.listSchools();
         if (cancelled) return;
         setSchools(list);
-        setMe(mine);
-        const fromUrl = initialSchoolFromUrl();
-        const school = mine?.school_slug ?? (list.some((s) => s.slug === fromUrl) ? fromUrl! : list[0]?.slug ?? "all");
-        setFilters(mine
-          ? { school, program: mine.program, year: String(mine.year) }
-          : { school, program: "all", year: "all" });
+        const f = await loadIdentity(list);
+        if (!cancelled) setFilters(f);
       } catch (e) {
         if (!cancelled) setLoadError(e instanceof Error ? e.message : "Couldn't reach the database.");
       }
     })();
     return () => { cancelled = true; };
-  }, [api]);
+  }, [api, loadIdentity]);
 
-  const loadStats = useCallback(async (f: Filters) => {
+  const loadGroup = useCallback(async (f: Filters, full: boolean) => {
+    const args = [
+      f.school === "all" ? null : f.school,
+      f.program === "all" ? null : f.program,
+      f.year === "all" ? null : Number(f.year),
+    ] as const;
     try {
-      setStats(await api.peerStats(
-        f.school === "all" ? null : f.school,
-        f.program === "all" ? null : f.program,
-        f.year === "all" ? null : Number(f.year),
-      ));
+      if (full) { setStats(await api.peerStats(...args)); setAvg(null); }
+      else { setAvg(await api.averageStudent(...args)); setStats(null); }
     } catch (e) {
-      setLoadError(e instanceof Error ? e.message : "Couldn't load peer stats.");
+      setLoadError(e instanceof Error ? e.message : "Couldn't load peer data.");
     }
   }, [api]);
 
-  useEffect(() => { if (filters) loadStats(filters); }, [filters, loadStats, me]);
+  useEffect(() => { if (filters) loadGroup(filters, verified); }, [filters, verified, loadGroup, mine]);
 
   const schoolBySlug = useMemo(() => new Map((schools ?? []).map((s) => [s.slug, s])), [schools]);
-  const myScale = me ? schoolBySlug.get(me.school_slug)?.gpa_scale ?? 4 : 4;
-  const results = useMemo(() => scoreMetrics(me, myScale, stats?.metrics ?? null), [me, myScale, stats]);
+  const mySchool = who?.school_slug ? schoolBySlug.get(who.school_slug) ?? null : null;
+  const myScale = mySchool?.gpa_scale ?? 4;
+  const results = useMemo(() => scoreMetrics(mine, myScale, stats?.metrics ?? null), [mine, myScale, stats]);
   const standing = overall(results);
-  const n = stats?.n ?? 0;
+  const group = verified ? stats : avg;
+  const n = group?.n ?? 0;
   const totalResponses = (schools ?? []).reduce((a, s) => a + Number(s.responses), 0);
   const activeSchools = (schools ?? []).filter((s) => Number(s.responses) > 0).length;
-  const shareSchool = filters && filters.school !== "all" ? filters.school : me?.school_slug ?? null;
+  const shareSchool = filters && filters.school !== "all" ? filters.school : who?.school_slug ?? null;
   const shareUrl = `${window.location.origin}${window.location.pathname}${shareSchool ? `?school=${shareSchool}` : ""}`;
+  const filterSchool = filters && filters.school !== "all" ? schoolBySlug.get(filters.school) ?? null : null;
+
+  async function signedIn() {
+    setAuthNotice(null);
+    if (!schools) return;
+    const f = await loadIdentity(schools);
+    setFilters(f);
+    document.getElementById("standing")?.scrollIntoView({ behavior: "smooth" });
+  }
+
+  async function signOut() {
+    await api.signOut();
+    setWho(null);
+    setMine(null);
+    setNotice(null);
+    setAuthNotice("Signed out.");
+    setFilters((f) => (f ? { ...f } : f));
+  }
 
   async function save(r: ResponseInput) {
     setSaving(true);
     setNotice(null);
     try {
       const saved = await api.saveMyResponse(r);
-      const first = !me;
-      setMe(saved);
+      const first = !mine;
+      setMine(saved);
       setSchools(await api.listSchools());
       if (first) setFilters({ school: saved.school_slug, program: saved.program, year: String(saved.year) });
       setNotice(first ? "Saved. Your percentiles are above." : "Updated.");
@@ -98,14 +145,28 @@ function Classmark({ api }: { api: Api }) {
     }
   }
 
-  async function remove() {
+  async function removeNumbers() {
     try {
       await api.deleteMyResponse();
-      setMe(null);
+      setMine(null);
       setSchools(await api.listSchools());
       setNotice("Your numbers were deleted.");
     } catch (e) {
       setNotice(e instanceof Error ? e.message : "Couldn't delete. Try again.");
+    }
+  }
+
+  async function removeAccount() {
+    try {
+      await api.deleteMyAccount();
+      setWho(null);
+      setMine(null);
+      setConfirmLeave(false);
+      setSchools(await api.listSchools());
+      setAuthNotice("Your account and numbers were deleted.");
+      setFilters((f) => (f ? { ...f } : f));
+    } catch (e) {
+      setNotice(e instanceof Error ? e.message : "Couldn't delete your account. Try again.");
     }
   }
 
@@ -131,8 +192,30 @@ function Classmark({ api }: { api: Api }) {
     <div className="wrap">
       <Header total={schools ? totalResponses : null} active={schools ? activeSchools : null} />
 
-      {!me && schools && (
-        <a className="cta" href="#your-numbers">Add your numbers to see your percentiles. It takes a minute, with no account and no name. <span aria-hidden>→</span></a>
+      {schools && !verified && (
+        <section className="panel stack join" id="sign-in" aria-labelledby="h-join">
+          <div className="stack tight">
+            <h2 id="h-join">See where you stand</h2>
+            <p className="muted small">
+              Below is the average student. To see your own percentile on every metric, confirm you're a student with your school email.
+              Your email is never shown to anyone or attached to your numbers.
+            </p>
+          </div>
+          {who && !verified && (
+            <p className="status error" role="alert">
+              {who.school_slug
+                ? `${who.email} isn't confirmed yet. Sign out and sign in again with a fresh code.`
+                : `${who.email} isn't from a listed school, so it can't be used here.`}{" "}
+              <button type="button" className="link" onClick={signOut}>Sign out</button>
+            </p>
+          )}
+          {!who && <SignIn api={api} schools={schools} captchaKey={captchaKey} onSignedIn={signedIn} />}
+          {authNotice && <p className="status" role="status">{authNotice}</p>}
+        </section>
+      )}
+
+      {verified && !mine && (
+        <a className="cta" href="#your-numbers">You're verified. Add your numbers to see your percentiles. <span aria-hidden>→</span></a>
       )}
 
       <section className="panel" id="standing" aria-labelledby="h-stand">
@@ -161,36 +244,50 @@ function Classmark({ api }: { api: Api }) {
             </div>
           </div>
         )}
-        <div className="standing">
-          <div className="big" aria-live="polite">
-            {standing != null ? <>{standing}<sup>{ordinal(standing).replace(/^\d+/, "")}</sup></> : "—"}
+        {verified ? (
+          <div className="standing">
+            <div className="big" aria-live="polite">
+              {standing != null ? <>{standing}<sup>{ordinal(standing).replace(/^\d+/, "")}</sup></> : "—"}
+            </div>
+            <div className="standing-text">
+              <h2 id="h-stand">Overall standing</h2>
+              <p className="muted small">{standingNote(!!mine, standing, n, stats == null, !!stats?.suppressed)}</p>
+              <span className="chip">{stats == null ? "Loading…" : `${n} ${n === 1 ? "peer" : "peers"} in this group`}</span>
+            </div>
           </div>
+        ) : (
           <div className="standing-text">
-            <h2 id="h-stand">Overall standing</h2>
-            <p className="muted small">{standingNote(!!me, standing, n, stats == null)}</p>
-            <span className="chip">{stats == null ? "Loading…" : `${n} ${n === 1 ? "peer" : "peers"} in this group`}</span>
+            <h2 id="h-stand">The average student</h2>
+            <p className="muted small">{averageNote(avg, filterSchool?.name ?? null)}</p>
+            <span className="chip">{avg == null ? "Loading…" : `${n} ${n === 1 ? "student" : "students"} in this group`}</span>
           </div>
-        </div>
+        )}
       </section>
 
       <section aria-labelledby="h-metrics" className="stack">
         <div className="section-head">
           <h2 id="h-metrics">By metric</h2>
-          <div className="legend">
-            <span className="key"><span className="dot" />Each peer (anonymous)</span>
-            <span className="key"><span className="dot you" />You</span>
-            <span className="key"><span className="tick" />Peer median</span>
-          </div>
+          {verified && (
+            <div className="legend">
+              <span className="key"><span className="dot" />Each peer (anonymous)</span>
+              <span className="key"><span className="dot you" />You</span>
+              <span className="key"><span className="tick" />Peer median</span>
+            </div>
+          )}
         </div>
         <div className="panel metrics">
-          {results.map((r) => <MetricRow key={r.metric.key} r={r} me={me} scale={myScale} enough={n >= MIN_PEERS} />)}
+          {verified
+            ? results.map((r) => <MetricRow key={r.metric.key} r={r} me={mine} scale={myScale} enough={n >= MIN_PEERS && !stats?.suppressed} />)
+            : METRICS.map((m) => <AverageRow key={m.key} metric={m} value={avg?.averages?.[m.key] ?? null} school={filterSchool} />)}
         </div>
       </section>
 
-      <section className="panel stack" aria-labelledby="h-moves">
-        <h2 id="h-moves">What would move you up</h2>
-        <Moves results={results} me={me} />
-      </section>
+      {verified && (
+        <section className="panel stack" aria-labelledby="h-moves">
+          <h2 id="h-moves">What would move you up</h2>
+          <Moves results={results} me={mine} />
+        </section>
+      )}
 
       <section className="panel share" aria-labelledby="h-share">
         <div className="stack tight">
@@ -208,7 +305,7 @@ function Classmark({ api }: { api: Api }) {
         <p className="muted small">Context while your group is small. These describe other cohorts, mostly graduating classes, so compare with care.</p>
         <div className="refs">
           {REFERENCES.map((ref) => {
-            const you = me && ref.you ? ref.you(me, me.school_slug) : null;
+            const you = mine && ref.you ? ref.you(mine, mine.school_slug) : null;
             return (
               <div className="ref" key={ref.text}>
                 <span className="fig">{ref.figure}</span>
@@ -221,35 +318,61 @@ function Classmark({ api }: { api: Api }) {
         </div>
       </section>
 
-      <section className="panel stack" id="your-numbers" aria-labelledby="h-me">
-        <h2 id="h-me">Your numbers</h2>
-        <p className="muted small">
-          Stored without your name, linked only to this browser. Leave any field blank to skip it. Update or delete it any time.
-        </p>
-        {schools && (
-          <ProfileForm schools={schools} initial={me} defaultSchool={initialSchoolFromUrl() ?? ""} saving={saving}
-            onSave={save} onDelete={me ? remove : null} />
-        )}
-        {notice && <p className="status" role="status">{notice}</p>}
-        <details>
-          <summary>School not listed?</summary>
-          <div className="stack">
-            <p className="muted small">Request it and it'll be added after a quick check.</p>
-            <RequestSchool onRequest={api.requestSchool} />
+      {verified && mySchool && (
+        <section className="panel stack" id="your-numbers" aria-labelledby="h-me">
+          <h2 id="h-me">Your numbers</h2>
+          <p className="muted small">
+            Stored without your name or email. Leave any field blank to skip it. Update or delete it any time.
+          </p>
+          <ProfileForm school={mySchool} initial={mine} saving={saving} onSave={save} onDelete={mine ? removeNumbers : null} />
+          {notice && <p className="status" role="status">{notice}</p>}
+        </section>
+      )}
+
+      {who && (
+        <section className="panel account" aria-labelledby="h-account">
+          <h2 id="h-account" className="sr-only">Account</h2>
+          <p className="small muted">Signed in as <b>{who.email}</b></p>
+          <div className="actions">
+            <button type="button" className="ghost" onClick={signOut}>Sign out</button>
+            {!confirmLeave && <button type="button" className="ghost" onClick={() => setConfirmLeave(true)}>Delete my account</button>}
+            {confirmLeave && (
+              <span className="confirm">
+                Delete your account and numbers for good?
+                <button type="button" className="danger" onClick={removeAccount}>Delete account</button>
+                <button type="button" className="ghost" onClick={() => setConfirmLeave(false)}>Keep</button>
+              </span>
+            )}
           </div>
-        </details>
-      </section>
+        </section>
+      )}
+
+      <details className="panel">
+        <summary>School not listed?</summary>
+        <div className="stack">
+          <p className="muted small">Request it with the email domain students use, and it'll be added after a quick check.</p>
+          <RequestSchool onRequest={api.requestSchool} />
+        </div>
+      </details>
 
       <footer className="muted small stack tight">
         <h3>How privacy works</h3>
-        <p>Each response is tied to an anonymous ID kept in your browser, never to a name or email. Nobody, including other students, can read individual responses. The app only shows sorted values for a group once at least {MIN_PEERS} people match, and hides any single metric with fewer than {MIN_PEERS} answers. GPAs are compared as a percentage of each school's scale, which is a rough way to compare across schools.</p>
+        <p>
+          You sign in with a one-time code sent to your school email. That only proves you're a student there: your numbers are stored
+          without your name or email, and nobody, including other students, can read individual responses. Signed-out visitors only
+          see averages. Verified students see sorted values for a group once at least {MIN_PEERS} people match, and any single metric
+          with fewer than {MIN_PEERS} answers stays hidden. A group is also hidden when comparing it with a wider group would single out
+          fewer than {MIN_PEERS} people. GPAs are compared as a percentage of each school's scale, which is a rough way to compare
+          across schools.
+        </p>
       </footer>
     </div>
   );
 }
 
-function standingNote(hasMe: boolean, standing: number | null, n: number, loading: boolean): string {
+function standingNote(hasMe: boolean, standing: number | null, n: number, loading: boolean, suppressed: boolean): string {
   if (loading) return "Loading peer data…";
+  if (suppressed) return "Hidden for privacy: this group differs from a wider one by fewer than 5 people. Widen the filter.";
   if (!hasMe) return n >= MIN_PEERS
     ? `${n} people in this group so far. Add your numbers to see where you rank.`
     : `Percentiles unlock once ${MIN_PEERS} peers match this filter (${n} so far). Widen the filter or share the link.`;
@@ -258,16 +381,47 @@ function standingNote(hasMe: boolean, standing: number | null, n: number, loadin
   return `Average of your percentiles across metrics, compared with ${n} peers. ${verdict}`;
 }
 
+function averageNote(avg: AverageStudent | null, schoolName: string | null): string {
+  if (avg == null) return "Loading…";
+  if (avg.suppressed) return "Hidden for privacy: this group differs from a wider one by fewer than 5 people. Widen the filter.";
+  if (!avg.averages) return `Averages unlock once ${MIN_PEERS} students match this filter (${avg.n} so far). Widen the filter or share the link.`;
+  return `What a typical student${schoolName ? ` at ${schoolName}` : ""} in this group reports. Verify your school email to see your own percentile on each one.`;
+}
+
 function Header({ total, active }: { total: number | null; active: number | null }) {
   return (
     <header className="stack tight">
-      <span className="eyebrow">Anonymous peer benchmark · CS &amp; adjacent programs</span>
+      <span className="eyebrow">Verified peer benchmark · CS &amp; adjacent programs</span>
       <h1>Classmark</h1>
       <p className="muted lede">See where you stand among students at your school, in your program and year. Every metric gets a percentile, and your biggest gaps turn into a short list of next moves.</p>
       {total != null && (
         <p className="small muted">{total} {total === 1 ? "response" : "responses"} across {active} {active === 1 ? "school" : "schools"}</p>
       )}
     </header>
+  );
+}
+
+function formatAverage(metric: Metric, v: number, school: School | null): string {
+  if (metric.key === "gpa_pct") {
+    return school ? `${(Math.round((v / 100) * school.gpa_scale * 100) / 100).toFixed(2)} / ${Number(school.gpa_scale)}` : `${v.toFixed(0)}% of scale`;
+  }
+  const shown = metric.key === "leetcode" ? String(Math.round(v)) : String(Math.round(v * 10) / 10);
+  return metric.key === "work_months" ? `${shown} mo` : shown;
+}
+
+function AverageRow({ metric, value, school }: { metric: Metric; value: number | null; school: School | null }) {
+  return (
+    <div className="row avg-row">
+      <div className="name"><span>{metric.label}</span></div>
+      <div className="avg">
+        <span className="val">{value == null ? "—" : formatAverage(metric, value, school)}</span>
+        <span className="small muted">{value == null ? "not enough answers yet" : "average"}</span>
+      </div>
+      <div className="pct">
+        <b className="tone-none">?</b>
+        <span className="small muted"><a href="#sign-in">verify →</a></span>
+      </div>
+    </div>
   );
 }
 
