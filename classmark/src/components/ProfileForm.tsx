@@ -2,9 +2,9 @@ import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
 import { PROGRAMS, type Program, type ResponseInput, type School } from "../api";
 
 interface Props {
-  schools: School[];
+  /** The student's school, fixed by their verified email. */
+  school: School;
   initial: ResponseInput | null;
-  defaultSchool: string;
   saving: boolean;
   onSave: (r: ResponseInput) => void;
   onDelete: (() => void) | null;
@@ -22,32 +22,34 @@ const NUM_FIELDS: { key: keyof ResponseInput; label: string; hint?: string }[] =
 
 type Draft = Record<string, string>;
 
-function toDraft(r: ResponseInput | null, school: string): Draft {
-  const d: Draft = { school_slug: r?.school_slug ?? school, program: r?.program ?? "Computer Science", year: String(r?.year ?? 2), gpa: r?.gpa == null ? "" : String(r.gpa) };
+function toDraft(r: ResponseInput | null): Draft {
+  const d: Draft = { program: r?.program ?? "Computer Science", year: String(r?.year ?? 2), gpa: r?.gpa == null ? "" : String(r.gpa) };
   for (const f of NUM_FIELDS) d[f.key] = r?.[f.key] == null ? "" : String(r[f.key]);
   return d;
 }
 
-export function ProfileForm({ schools, initial, defaultSchool, saving, onSave, onDelete }: Props) {
-  const [d, setD] = useState<Draft>(() => toDraft(initial, defaultSchool));
+export function ProfileForm({ school, initial, saving, onSave, onDelete }: Props) {
+  const [d, setD] = useState<Draft>(() => toDraft(initial));
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
-  useEffect(() => setD(toDraft(initial, defaultSchool)), [initial, defaultSchool]);
+  useEffect(() => setD(toDraft(initial)), [initial]);
 
-  const scale = schools.find((s) => s.slug === d.school_slug)?.gpa_scale;
+  const scale = school.gpa_scale;
   const set = (k: string) => (e: ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setD({ ...d, [k]: e.target.value });
 
   function submit(e: FormEvent) {
     e.preventDefault();
     const n = (v: string) => (v.trim() === "" ? null : Number(v));
     const r: ResponseInput = {
-      school_slug: d.school_slug, program: d.program as Program, year: Number(d.year), gpa: n(d.gpa),
+      school_slug: school.slug, program: d.program as Program, year: Number(d.year), gpa: n(d.gpa),
       projects: n(d.projects), hackathons: n(d.hackathons), hackathon_wins: n(d.hackathon_wins), leetcode: n(d.leetcode),
       internships: n(d.internships), work_months: n(d.work_months), languages: n(d.languages),
     };
-    if (!r.school_slug) return setError("Pick your school.");
-    if (r.gpa != null && scale != null && r.gpa > scale) return setError(`GPA can't be above ${scale} at this school.`);
+    const nums = Object.entries(r).filter(([k]) => k !== "school_slug" && k !== "program");
+    if (nums.some(([, v]) => v != null && (!Number.isFinite(v as number) || (v as number) < 0)))
+      return setError("Numbers can't be negative.");
+    if (r.gpa != null && r.gpa > scale) return setError(`GPA can't be above ${scale} at this school.`);
     if (r.hackathon_wins != null && r.hackathons != null && r.hackathon_wins > r.hackathons)
       return setError("Placements can't be more than hackathons attended.");
     setError(null);
@@ -57,11 +59,8 @@ export function ProfileForm({ schools, initial, defaultSchool, saving, onSave, o
   return (
     <form className="grid-form" onSubmit={submit} noValidate>
       <div className="field">
-        <label htmlFor="pf-school">School</label>
-        <select id="pf-school" value={d.school_slug} onChange={set("school_slug")} required>
-          <option value="" disabled>Choose…</option>
-          {schools.map((s) => <option key={s.slug} value={s.slug}>{s.name}</option>)}
-        </select>
+        <span className="label" id="pf-school-label">School</span>
+        <span className="locked" aria-labelledby="pf-school-label" id="pf-school">{school.name}</span>
       </div>
       <div className="field">
         <label htmlFor="pf-program">Program</label>
@@ -76,7 +75,7 @@ export function ProfileForm({ schools, initial, defaultSchool, saving, onSave, o
         </select>
       </div>
       <div className="field">
-        <label htmlFor="pf-gpa">CGPA{scale ? ` (out of ${scale})` : ""}</label>
+        <label htmlFor="pf-gpa">CGPA (out of {scale})</label>
         <input id="pf-gpa" type="number" inputMode="decimal" step="0.01" min={0} max={scale} value={d.gpa} onChange={set("gpa")} />
       </div>
       {NUM_FIELDS.map((f) => (
@@ -88,7 +87,7 @@ export function ProfileForm({ schools, initial, defaultSchool, saving, onSave, o
       ))}
       <div className="actions span-all">
         <button type="submit" disabled={saving}>{saving ? "Saving…" : initial ? "Update my numbers" : "Save and see my percentiles"}</button>
-        {onDelete && !confirmDelete && <button type="button" className="ghost" onClick={() => setConfirmDelete(true)}>Delete my data</button>}
+        {onDelete && !confirmDelete && <button type="button" className="ghost" onClick={() => setConfirmDelete(true)}>Delete my numbers</button>}
         {onDelete && confirmDelete && (
           <span className="confirm">
             Delete your numbers for good?
