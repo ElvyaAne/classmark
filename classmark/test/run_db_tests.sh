@@ -6,5 +6,5 @@ cd "$(dirname "$0")/.."
 PG_ARGS=${PG_ARGS:-"-h localhost -U postgres"}
 psql $PG_ARGS -qc "drop database if exists classmark_test" -c "create database classmark_test"
 psql $PG_ARGS -d classmark_test -q -v ON_ERROR_STOP=1 \
-  -f test/supabase_stub.sql -f supabase/migrations/0001_init.sql -f supabase/seed.sql -f test/db_test.sql 2>&1 \
+  -f test/supabase_stub.sql -f supabase/migrations/0001_init.sql -f supabase/migrations/0002_school_email.sql -f supabase/seed.sql -f test/db_test.sql 2>&1 \
   | grep -E "ok  |FAIL|PASSED|ERROR"
