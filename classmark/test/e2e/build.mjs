@@ -15,6 +15,7 @@ await esbuild.build({
   define: {
     "import.meta.env.VITE_SUPABASE_URL": JSON.stringify(apiUrl),
     "import.meta.env.VITE_SUPABASE_ANON_KEY": JSON.stringify("test-anon-key"),
+    "import.meta.env.VITE_TURNSTILE_SITE_KEY": "undefined",
     "process.env.NODE_ENV": '"production"',
   },
   logLevel: "warning",

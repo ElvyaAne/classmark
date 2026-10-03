@@ -7,11 +7,11 @@ cd "$(dirname "$0")/../.."
 PG_ARGS=${PG_ARGS:-"-h localhost -U postgres"}
 DB=classmark_e2e
 psql $PG_ARGS -qc "drop database if exists $DB" -c "create database $DB"
-psql $PG_ARGS -d $DB -q -v ON_ERROR_STOP=1 -f test/supabase_stub.sql -f supabase/migrations/0001_init.sql -f supabase/seed.sql >/dev/null
+psql $PG_ARGS -d $DB -q -v ON_ERROR_STOP=1 -f test/supabase_stub.sql -f supabase/migrations/0001_init.sql -f supabase/migrations/0002_school_email.sql -f supabase/seed.sql >/dev/null
 
-# six other students in the same group
+# six other verified students in the same group
 psql $PG_ARGS -d $DB -q -v ON_ERROR_STOP=1 <<'SQL'
-insert into auth.users (id) select gen_random_uuid() from generate_series(1,6);
+insert into auth.users (id, email, email_confirmed_at) select gen_random_uuid(), 'peer' || i || '@uottawa.ca', now() from generate_series(1,6) i;
 insert into public.responses (user_id, school_slug, program, year, gpa, projects, hackathons, hackathon_wins, leetcode, internships, work_months, languages)
 select id, 'uottawa', 'CS & Mathematics', 2, v.gpa, v.p, v.h, v.w, v.l, v.i, v.m, v.lang
 from (select id, row_number() over () rn from auth.users) u

@@ -1,11 +1,14 @@
 """Local stand-in for the Supabase endpoints Classmark uses, for end-to-end tests only.
 
-Implements anonymous sign-up, token refresh and PostgREST-style RPC calls on top of a real
-PostgreSQL database loaded with supabase/migrations + seed. Every RPC runs under the same
+Implements email one-time-code sign-in (/otp + /verify), token refresh, logout and
+PostgREST-style RPC calls on top of a real PostgreSQL database loaded with supabase/migrations
++ seed. Sign-ups go through the real auth.users trigger, so non-school emails fail the same way.
+For tests, GET /__test/otp?email=... returns the last code (and user id) sent to an address. Every RPC runs under the same
 roles Supabase uses (anon / authenticated) with request.jwt.claims set, so grants and
 auth.uid() behave as in production. Also serves the built app from --static.
 """
-import argparse, json, os, re, shlex, subprocess, uuid
+import argparse, json, os, random, re, shlex, subprocess, uuid
+from urllib.parse import parse_qs, urlparse
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 
 ap = argparse.ArgumentParser()
@@ -31,6 +34,12 @@ SIGS = json.loads(out.strip())
 def tag() -> str:
     return "q" + uuid.uuid4().hex[:8]
 
+def lit(v: str) -> str:
+    t = tag()
+    return f"${t}${v}${t}$"
+
+CODES: dict[str, tuple[str, str]] = {}  # email -> (code, user id)
+
 def call(fn: str, body: dict, sub: str | None):
     sig = SIGS.get(fn)
     if not sig:
@@ -43,8 +52,10 @@ def call(fn: str, body: dict, sub: str | None):
     invocation = f"public.{fn}({', '.join(parts)})"
     t = tag()
     src = f"(select ${t}${json.dumps(body)}${t}$::jsonb b) x"
-    select = (f"select coalesce(jsonb_agg(r), '[]'::jsonb) from {src}, lateral {invocation} r" if sig["set"]
-              else f"select to_jsonb({invocation}) from {src}")
+    # always print exactly one line of JSON text ("null" for SQL null), so the result can't be
+    # confused with the set_config line printed before it
+    select = (f"select coalesce(jsonb_agg(r), '[]'::jsonb)::text from {src}, lateral {invocation} r" if sig["set"]
+              else f"select coalesce(to_jsonb({invocation})::text, 'null') from {src}")
     role = "authenticated" if sub else "anon"
     claims = json.dumps({"sub": sub, "role": role} if sub else {"role": "anon"})
     ok, out = psql(f"begin; set local role {role}; "
@@ -58,12 +69,22 @@ def call(fn: str, body: dict, sub: str | None):
     value = lines[-1] if lines else "null"
     return 200, json.loads(value) if value else None
 
+# Same security headers the real host sends (public/_headers), so the test catches CSP breakage.
+HEADERS = [tuple(l.strip().split(": ", 1)) for l in open("public/_headers")
+           if l.startswith("  ") and ": " in l and not l.strip().startswith("Strict-Transport")]
+
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *a, **kw):
         super().__init__(*a, directory=args.static, **kw)
 
     def log_message(self, *a):
         pass
+
+    def end_headers(self):
+        if self.command == "GET":
+            for k, v in HEADERS:
+                self.send_header(k, v)
+        super().end_headers()
 
     def send_json(self, status, payload):
         data = json.dumps(payload).encode()
@@ -75,6 +96,15 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         path = self.path.split("?")[0]
+        if path == "/__test/otp":
+            email = parse_qs(urlparse(self.path).query).get("email", [""])[0].lower()
+            code, uid = CODES.get(email, ("", ""))
+            return self.send_json(200, {"code": code, "user_id": uid})
+        if path == "/__test/confirm":  # stands in for clicking the link in the email
+            email = parse_qs(urlparse(self.path).query).get("email", [""])[0].lower()
+            code, uid = CODES.pop(email, ("", ""))
+            ok, out = psql(f"update auth.users set email_confirmed_at = now() where id = '{uid}'") if uid else (False, "")
+            return self.send_json(200 if ok else 404, {"user_id": uid})
         if not os.path.exists(os.path.join(args.static, path.lstrip("/"))) or path == "/":
             self.path = "/index.html"
         return super().do_GET()
@@ -83,12 +113,33 @@ class Handler(SimpleHTTPRequestHandler):
         length = int(self.headers.get("Content-Length") or 0)
         body = json.loads(self.rfile.read(length) or b"{}")
         auth = (self.headers.get("Authorization") or "").removeprefix("Bearer ")
-        if self.path.startswith("/auth/v1/signup"):
-            uid = str(uuid.uuid4())
-            ok, out = psql(f"insert into auth.users (id) values ('{uid}')")
+        if self.path.startswith("/auth/v1/otp"):
+            email = str(body.get("email", "")).strip()
+            ok, out = psql(f"select id from auth.users where lower(email) = lower({lit(email)})")
+            uid = out.strip() if ok else ""
+            if not uid:
+                uid = str(uuid.uuid4())
+                ok, out = psql(f"insert into auth.users (id, email) values ('{uid}', {lit(email)})")
+                if not ok:  # what GoTrue returns when a trigger on auth.users refuses the row
+                    return self.send_json(500, {"code": 500, "error_code": "unexpected_failure",
+                                                "msg": "Database error saving new user"})
+            CODES[email.lower()] = (f"{random.randint(0, 999999):06d}", uid)
+            return self.send_json(200, {})
+        if self.path.startswith("/auth/v1/verify"):
+            email = str(body.get("email", "")).strip().lower()
+            code, uid = CODES.get(email, ("", ""))
+            if not code or body.get("token") != code or body.get("type") != "email":
+                return self.send_json(403, {"code": 403, "error_code": "otp_expired",
+                                            "msg": "Token has expired or is invalid"})
+            del CODES[email]
+            ok, out = psql(f"update auth.users set email_confirmed_at = now() where id = '{uid}'")
             assert ok, out
             return self.send_json(200, {"access_token": "u:" + uid, "refresh_token": "r:" + uid,
-                                        "expires_in": 3600, "user": {"id": uid, "is_anonymous": True}})
+                                        "expires_in": 3600, "user": {"id": uid, "email": email}})
+        if self.path.startswith("/auth/v1/logout"):
+            self.send_response(204)
+            self.end_headers()
+            return
         if self.path.startswith("/auth/v1/token"):
             uid = str(body.get("refresh_token", "")).removeprefix("r:")
             return self.send_json(200, {"access_token": "u:" + uid, "refresh_token": "r:" + uid, "expires_in": 3600})
