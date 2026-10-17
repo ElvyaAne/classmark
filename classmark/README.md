@@ -30,6 +30,8 @@ Privacy is enforced in the database, not the UI:
 - **Security headers** (`vercel.json`, `public/_headers`): a strict Content Security Policy, no framing, HSTS, nosniff.
 - **Optional CAPTCHA**: Cloudflare Turnstile on the sign-in form.
 
+Classmark is an independent student project, not affiliated with or endorsed by the University of Ottawa or any other school.
+
 One honest caveat: you, as the project admin, can join `responses` to `auth.users` in the Supabase dashboard. The privacy promise is that other students can't see individual answers, not that the admin can't.
 
 ## Stack

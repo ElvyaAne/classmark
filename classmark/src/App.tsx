@@ -322,7 +322,7 @@ function Classmark({ api, captchaKey }: { api: Api; captchaKey?: string }) {
         <section className="panel stack" id="your-numbers" aria-labelledby="h-me">
           <h2 id="h-me">Your numbers</h2>
           <p className="muted small">
-            Stored without your name or email. Leave any field blank to skip it. Update or delete it any time.
+            No name asked, and the table holding your numbers has no email column. Leave any field blank to skip it. Update or delete it any time.
           </p>
           <ProfileForm school={mySchool} initial={mine} saving={saving} onSave={save} onDelete={mine ? removeNumbers : null} />
           {notice && <p className="status" role="status">{notice}</p>}
@@ -358,12 +358,23 @@ function Classmark({ api, captchaKey }: { api: Api; captchaKey?: string }) {
       <footer className="muted small stack tight">
         <h3>How privacy works</h3>
         <p>
-          You sign in with a one-time code sent to your school email. That only proves you're a student there: your numbers are stored
-          without your name or email, and nobody, including other students, can read individual responses. Signed-out visitors only
+          You sign in with a one-time code sent to your school email. That only proves you're a student there. Classmark never asks
+          for your name, and nobody using the site, including other students, can read individual responses. Signed-out visitors only
           see averages. Verified students see sorted values for a group once at least {MIN_PEERS} people match, and any single metric
           with fewer than {MIN_PEERS} answers stays hidden. A group is also hidden when comparing it with a wider group would single out
           fewer than {MIN_PEERS} people. GPAs are compared as a percentage of each school's scale, which is a rough way to compare
           across schools.
+        </p>
+        <h3>If something goes wrong</h3>
+        <p>
+          Your numbers are linked to your account, and your account is your school email. If the database were ever breached, the two
+          could be matched. Classmark is run by one student on free hosting, comes with no guarantees, and you use it at your own risk.
+          Share only what you're fine with, and use "Delete my account" to erase everything at any time. If a breach ever happened, the
+          site would say so here.
+        </p>
+        <p>
+          Classmark is an independent student project. It is not affiliated with, endorsed by, or run by the University of Ottawa or
+          any other school.
         </p>
       </footer>
     </div>

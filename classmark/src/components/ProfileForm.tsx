@@ -85,6 +85,10 @@ export function ProfileForm({ school, initial, saving, onSave, onDelete }: Props
             placeholder={f.hint ?? ""} />
         </div>
       ))}
+      <p className="muted small span-all notice">
+        Only share what you're comfortable with: every field is optional. Classmark is a free student project, and no site can
+        promise its data will never leak. If this one did, your numbers could be matched to your school email.
+      </p>
       <div className="actions span-all">
         <button type="submit" disabled={saving}>{saving ? "Saving…" : initial ? "Update my numbers" : "Save and see my percentiles"}</button>
         {onDelete && !confirmDelete && <button type="button" className="ghost" onClick={() => setConfirmDelete(true)}>Delete my numbers</button>}
