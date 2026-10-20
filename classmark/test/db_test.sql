@@ -32,6 +32,21 @@ begin
   reset role;
 end $$;
 
+-- Publishes every saved response at once. The privacy and differencing checks below use it to set
+-- up exact group sizes; the batched release itself is tested in its own section at the end.
+create or replace function pg_temp.publish_all() returns void language sql as $$
+  insert into public.published_responses (user_id, school_slug, program, year, gpa, projects, hackathons,
+                                          hackathon_wins, leetcode, internships, work_months, languages)
+  select user_id, school_slug, program, year, gpa, projects, hackathons, hackathon_wins, leetcode,
+         internships, work_months, languages
+  from public.responses
+  on conflict (user_id) do update set
+    school_slug = excluded.school_slug, program = excluded.program, year = excluded.year, gpa = excluded.gpa,
+    projects = excluded.projects, hackathons = excluded.hackathons, hackathon_wins = excluded.hackathon_wins,
+    leetcode = excluded.leetcode, internships = excluded.internships, work_months = excluded.work_months,
+    languages = excluded.languages
+$$;
+
 -- ---------------------------------------------------------------- signup guard
 select pg_temp.check((select count(*) from public.list_schools()) = 10, '10 approved schools seeded');
 select pg_temp.check((select email_domains from public.list_schools() where slug = 'uottawa') = '{uottawa.ca}', 'schools list their email domains');
@@ -165,6 +180,7 @@ select pg_temp.check(public.peer_stats('uottawa','CS & Mathematics',2)->'metrics
 reset role;
 
 select pg_temp.save(6, '{"program":"CS & Mathematics","year":2,"gpa":8.5,"projects":3,"hackathons":1,"hackathon_wins":0,"leetcode":60,"internships":0,"work_months":0,"languages":4}');
+select pg_temp.publish_all();
 
 set role authenticated;
 select pg_temp.as_user(1);
@@ -190,6 +206,7 @@ reset role;
 -- now expose exactly that one person, so the narrower group must hide.
 select pg_temp.student(7, 's7@uottawa.ca');
 select pg_temp.save(7, '{"program":"Computer Science","year":2,"gpa":9.9,"projects":9,"hackathons":9,"hackathon_wins":9,"leetcode":900,"internships":3,"work_months":9,"languages":9}');
+select pg_temp.publish_all();
 set role anon;
 select pg_temp.as_user(null);
 select pg_temp.check((public.average_student('uottawa','CS & Mathematics',2)->>'suppressed')::boolean, 'group hidden when a wider group differs by 1 person');
@@ -202,6 +219,7 @@ reset role;
 -- four more Computer Science students: the difference is now 5, safe again
 select pg_temp.student(i, 's' || i || '@uottawa.ca') from generate_series(8, 11) i;
 select pg_temp.save(i, '{"program":"Computer Science","year":2,"gpa":7,"projects":1,"hackathons":1,"hackathon_wins":0,"internships":0,"work_months":0,"languages":3}') from generate_series(8, 11) i;
+select pg_temp.publish_all();
 set role anon;
 select pg_temp.as_user(null);
 select pg_temp.check(not (public.average_student('uottawa','CS & Mathematics',2)->>'suppressed')::boolean, 'group returns once the difference reaches 5');
@@ -210,6 +228,7 @@ reset role;
 -- would expose the one Computer Science student's LeetCode count
 select pg_temp.student(12, 's12@uottawa.ca');
 select pg_temp.save(12, '{"program":"CS & Mathematics","year":2,"gpa":8,"projects":1,"leetcode":20}');
+select pg_temp.publish_all();
 set role anon;
 select pg_temp.as_user(null);
 select pg_temp.check(not (public.average_student('uottawa','CS & Mathematics',2)->'averages' ? 'leetcode'), 'per-metric differences are protected too');
@@ -255,4 +274,65 @@ select public.delete_my_account();
 reset role;
 select pg_temp.check(not exists (select 1 from public.responses r where r.user_id = pg_temp.uid(7)), 'deleting the account removes its response');
 select pg_temp.check(not exists (select 1 from public.response_history h where h.user_id = pg_temp.uid(7)), 'deleting the account removes its history');
+-- ---------------------------------------------------------------- batched release
+-- New and changed numbers only become visible 5 at a time per school, program and year, so
+-- comparing a group before and after never isolates one person.
+create or replace function pg_temp.published(i int) returns jsonb language sql as $$
+  select to_jsonb(p) - 'published_at' - 'user_id' from public.published_responses p where p.user_id = pg_temp.uid(i)
+$$;
+create or replace function pg_temp.cell_count(y int) returns int language sql as $$
+  select count(*)::int from public.published_responses where school_slug = 'mcgill' and program = 'Computer Science' and year = y
+$$;
+select pg_temp.student(i, 'm' || i || '@mcgill.ca') from generate_series(100, 112) i;
+select pg_temp.save(i, '{"program":"Computer Science","year":1,"gpa":3.5,"projects":2,"leetcode":50,"languages":3}') from generate_series(100, 103) i;
+select pg_temp.check(pg_temp.cell_count(1) = 0, 'four new answers wait for a fifth');
+set role anon;
+select pg_temp.as_user(null);
+select pg_temp.check((public.average_student('mcgill', null, null)->>'n')::int = 0, 'waiting answers are not counted in comparisons');
+reset role;
+select pg_temp.save(104, '{"program":"Computer Science","year":1,"gpa":3.1,"projects":1,"leetcode":20,"languages":2}');
+select pg_temp.check(pg_temp.cell_count(1) = 5, 'the fifth answer releases all five together');
+set role anon;
+select pg_temp.as_user(null);
+select pg_temp.check((public.average_student('mcgill', 'Computer Science', 1)->>'n')::int = 5, 'released answers show in comparisons');
+reset role;
+
+select pg_temp.save(100, '{"program":"Computer Science","year":1,"gpa":3.5,"projects":2,"leetcode":120,"languages":3}');
+select pg_temp.check((pg_temp.published(100)->>'leetcode')::int = 50, 'one person''s update waits');
+select pg_temp.save(101, '{"program":"Computer Science","year":1,"gpa":3.5,"projects":2,"leetcode":50,"languages":3}');
+select pg_temp.check((select count(*) from public._pending()) = 1, 'saving the same numbers again is not a change');
+select pg_temp.save(i, '{"program":"Computer Science","year":1,"gpa":3.6,"projects":3,"leetcode":60,"languages":3}') from generate_series(101, 103) i;
+select pg_temp.check((pg_temp.published(100)->>'leetcode')::int = 50, 'four changes still wait');
+select pg_temp.save(104, '{"program":"Computer Science","year":1,"gpa":3.2,"projects":1,"leetcode":25,"languages":2}');
+select pg_temp.check((pg_temp.published(100)->>'leetcode')::int = 120 and (pg_temp.published(104)->>'leetcode')::int = 25,
+  'five changes release together');
+
+-- moving to another year touches both groups, so it waits until both have a batch
+select pg_temp.save(100, '{"program":"Computer Science","year":2,"gpa":3.5,"projects":2,"leetcode":120,"languages":3}');
+select pg_temp.save(i, '{"program":"Computer Science","year":2,"gpa":3.0,"projects":1,"leetcode":10,"languages":2}') from generate_series(105, 108) i;
+select pg_temp.check(pg_temp.cell_count(2) = 0 and (pg_temp.published(100)->>'year')::int = 1,
+  'a move waits while the group being left has no batch, and holds back the group being joined');
+select pg_temp.save(i, '{"program":"Computer Science","year":1,"gpa":3.7,"projects":3,"leetcode":70,"languages":4}') from generate_series(101, 104) i;
+select pg_temp.check(pg_temp.cell_count(2) = 5 and pg_temp.cell_count(1) = 4 and (pg_temp.published(100)->>'year')::int = 2,
+  'the move releases once both groups have five changes');
+
+-- deleting is immediate
+select pg_temp.as_user(101);
+set role authenticated;
+select public.delete_my_response();
+reset role;
+select pg_temp.check(pg_temp.published(101) is null, 'deleted numbers leave comparisons at once');
+select pg_temp.check((select count(*) from public._pending()) = 0, 'nothing left waiting');
+set role anon;
+do $$ begin
+  perform * from public.published_responses;
+  raise exception 'FAIL: anon read published responses';
+exception when insufficient_privilege then raise notice 'ok  anon cannot read published responses directly';
+end $$;
+do $$ begin
+  perform public._release_ready();
+  raise exception 'FAIL: anon forced a release';
+exception when insufficient_privilege then raise notice 'ok  nobody can force a release';
+end $$;
+reset role;
 \echo ALL DATABASE TESTS PASSED

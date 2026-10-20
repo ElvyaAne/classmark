@@ -28,6 +28,7 @@ Privacy is enforced in the database, not the UI:
 - **Verified students**: `peer_stats()` returns **sorted value arrays only**, never rows or IDs.
 - **Minimum group size**: a group, or any single metric, with fewer than **5** people is hidden.
 - **Differencing protection**: a group is also hidden when a wider group (drop the school, program or year filter) has only 1 to 4 more people. Without this, subtracting "uOttawa, all programs" from "uOttawa, CS" could reveal one student's numbers. The same rule applies to each metric.
+- **Batched release**: comparisons read `published_responses`, not the live table. A new or changed response is copied there only together with at least 4 others from the same school, program and year, so comparing a group before and after someone joins or edits changes it by 0 people or by 5 or more. Deletions still take effect at once.
 - **Email stays with auth**: the `responses` table has no name or email. `get_my_response()` and `get_my_history()` only ever return the caller's own rows, and history is never used in peer comparisons.
 - **Sign-up guard**: a trigger on `auth.users` refuses addresses outside approved school domains, so the sign-in form can't be used to email random inboxes. `save_my_response()` checks the domain again.
 - **Security headers** (`vercel.json`, `public/_headers`): a strict Content Security Policy, no framing, HSTS, nosniff.
@@ -51,8 +52,8 @@ One honest caveat: you, as the project admin, can join `responses` to `auth.user
 ### 1. Create the database (free)
 
 1. Create a project at [supabase.com](https://supabase.com).
-2. Open the **SQL Editor** and run each file in `supabase/migrations/` in order (`0001_init.sql`, `0002_school_email.sql`, `0003_history.sql`), then `supabase/seed.sql`. The seed adds 10 Canadian schools with their email domains.
-   - Already set up? Run only the migrations you haven't run yet. `0002` deletes any responses left over from the anonymous version, since they can't be verified. `0003` starts everyone's history from their current numbers.
+2. Open the **SQL Editor** and run each file in `supabase/migrations/` in order (`0001_init.sql` through `0004_batched_release.sql`), then `supabase/seed.sql`. The seed adds 10 Canadian schools with their email domains.
+   - Already set up? Run only the migrations you haven't run yet. `0002` deletes any responses left over from the anonymous version, since they can't be verified. `0003` starts everyone's history from their current numbers. `0004` publishes everything already saved, then batches new changes.
 3. **Authentication → Sign In / Providers**: keep **Email** on, turn **Allow anonymous sign-ins** off.
 4. **Authentication → Emails → Templates**: in both **Confirm signup** and **Magic Link**, add the code so students can type it:
    ```html
@@ -102,13 +103,16 @@ update schools set email_domains = array_append(email_domains, 'other-domain.ca'
 
 -- participation by school
 select slug, name, responses from list_schools();
+
+-- changes waiting for a batch of 5, per school|program|year
+select c as cell, count(*) from _pending(), unnest(cells) c group by c order by count(*) desc;
 ```
 
 ## Tests
 
 ```bash
 npm test                                                  # percentile math + auth client (Node test runner)
-PG_ARGS="-h localhost -U postgres" npm run test:db        # 65 database checks: sign-up guard, privacy rules, ownership, validation
+PG_ARGS="-h localhost -U postgres" npm run test:db        # 79 database checks: sign-up guard, privacy rules, ownership, validation
 PG_ARGS="-h localhost -U postgres" npm run test:e2e       # full browser flow, signed out and verified
 ```
 
@@ -127,6 +131,7 @@ supabase/
   migrations/0001_init.sql            schema, privacy functions, grants
   migrations/0002_school_email.sql    school-email sign-in, average student, differencing protection
   migrations/0003_history.sql         your own numbers over time
+  migrations/0004_batched_release.sql new and changed numbers become visible 5 at a time
   seed.sql                            starter schools and their email domains
 public/_headers      security headers (Netlify)
 vercel.json          build + security headers (Vercel)
@@ -137,6 +142,6 @@ test/                unit, database and end-to-end tests
 
 - **Self-reported data.** Verified students can still enter anything. Verification stops outsiders and fake schools, not exaggeration.
 - **Staff and alumni addresses** on a school domain can also sign in.
-- **Changes over time.** Someone watching a small group before and after one person joins could estimate that person's numbers. Showing results only after a group grows by several people, or refreshing on a schedule, would close this.
+- **Changes over time.** New and changed numbers are released in batches of 5 per school, program and year (`0004_batched_release.sql`). Two gaps remain: someone watching closely can notice who left after a deletion, and inside a batch, if only one person changed a given metric, that metric's change can still be tied to the batch. Numbers in a group that rarely gets 5 changes can also wait a long time to count.
 - **Cross-school GPA** is compared as a percentage of each school's scale, which is a rough approximation. Comparisons within one school are exact.
 - **Ideas:** show how your percentiles (not just your numbers) moved over time.

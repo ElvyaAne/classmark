@@ -372,6 +372,8 @@ function Classmark({ api, captchaKey }: { api: Api; captchaKey?: string }) {
           <h2 id="h-me">Your numbers</h2>
           <p className="muted small">
             No name asked, and the table holding your numbers has no email column. Leave any field blank to skip it. Update or delete it any time.
+            New numbers and changes reach what classmates see in batches of {MIN_PEERS} per program and year, so nobody can work out
+            yours by comparing the page before and after you save.
           </p>
           <ProfileForm school={mySchool} initial={mine} saving={saving} onSave={save} onDelete={mine ? removeNumbers : null} />
           {notice && <p className="status" role="status">{notice}</p>}
@@ -411,7 +413,8 @@ function Classmark({ api, captchaKey }: { api: Api; captchaKey?: string }) {
           for your name, and nobody using the site, including other students, can read individual responses. Signed-out visitors only
           see averages. Verified students see sorted values for a group once at least {MIN_PEERS} people match, and any single metric
           with fewer than {MIN_PEERS} answers stays hidden. A group is also hidden when comparing it with a wider group would single out
-          fewer than {MIN_PEERS} people. GPAs are compared as a percentage of each school's scale, which is a rough way to compare
+          fewer than {MIN_PEERS} people. New and changed numbers are added {MIN_PEERS} or more at a time per school, program and year,
+          so checking a group before and after someone joins can't single them out either. GPAs are compared as a percentage of each school's scale, which is a rough way to compare
           across schools.
         </p>
         <h3>If something goes wrong</h3>
