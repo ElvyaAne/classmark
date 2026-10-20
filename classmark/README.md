@@ -16,6 +16,7 @@ A peer benchmark for computer science and adjacent students. Verify with your sc
 - **Multi-school**: each school has its own GPA scale (4.0, 4.3, 10-point, 12-point, percentage) and email domain. Students can request new schools, which go live once an admin approves them.
 - **Filters**: your school or all schools, any program, any year
 - **Share links**: `/?school=uottawa` opens on a school, for growing the sample
+- **Your progress**: each save keeps that day's numbers, so you can see how each metric changed since your first check-in. Only you can see your history.
 - **Your data, your call**: delete your numbers, or your whole account, any time
 
 ## Privacy and security model
@@ -27,7 +28,7 @@ Privacy is enforced in the database, not the UI:
 - **Verified students**: `peer_stats()` returns **sorted value arrays only**, never rows or IDs.
 - **Minimum group size**: a group, or any single metric, with fewer than **5** people is hidden.
 - **Differencing protection**: a group is also hidden when a wider group (drop the school, program or year filter) has only 1 to 4 more people. Without this, subtracting "uOttawa, all programs" from "uOttawa, CS" could reveal one student's numbers. The same rule applies to each metric.
-- **Email stays with auth**: the `responses` table has no name or email. `get_my_response()` only ever returns the caller's own row.
+- **Email stays with auth**: the `responses` table has no name or email. `get_my_response()` and `get_my_history()` only ever return the caller's own rows, and history is never used in peer comparisons.
 - **Sign-up guard**: a trigger on `auth.users` refuses addresses outside approved school domains, so the sign-in form can't be used to email random inboxes. `save_my_response()` checks the domain again.
 - **Security headers** (`vercel.json`, `public/_headers`): a strict Content Security Policy, no framing, HSTS, nosniff.
 - **Optional CAPTCHA**: Cloudflare Turnstile on the sign-in form.
@@ -50,8 +51,8 @@ One honest caveat: you, as the project admin, can join `responses` to `auth.user
 ### 1. Create the database (free)
 
 1. Create a project at [supabase.com](https://supabase.com).
-2. Open the **SQL Editor** and run, in order: `supabase/migrations/0001_init.sql`, `supabase/migrations/0002_school_email.sql`, then `supabase/seed.sql`. The seed adds 10 Canadian schools with their email domains.
-   - Already ran `0001` and the old seed? Just run `0002` and then `seed.sql`. `0002` deletes any responses left over from the anonymous version, since they can't be verified.
+2. Open the **SQL Editor** and run each file in `supabase/migrations/` in order (`0001_init.sql`, `0002_school_email.sql`, `0003_history.sql`), then `supabase/seed.sql`. The seed adds 10 Canadian schools with their email domains.
+   - Already set up? Run only the migrations you haven't run yet. `0002` deletes any responses left over from the anonymous version, since they can't be verified. `0003` starts everyone's history from their current numbers.
 3. **Authentication → Sign In / Providers**: keep **Email** on, turn **Allow anonymous sign-ins** off.
 4. **Authentication → Emails → Templates**: in both **Confirm signup** and **Magic Link**, add the code so students can type it:
    ```html
@@ -107,7 +108,7 @@ select slug, name, responses from list_schools();
 
 ```bash
 npm test                                                  # percentile math + auth client (Node test runner)
-PG_ARGS="-h localhost -U postgres" npm run test:db        # 55 database checks: sign-up guard, privacy rules, ownership, validation
+PG_ARGS="-h localhost -U postgres" npm run test:db        # 65 database checks: sign-up guard, privacy rules, ownership, validation
 PG_ARGS="-h localhost -U postgres" npm run test:e2e       # full browser flow, signed out and verified
 ```
 
@@ -121,10 +122,11 @@ src/
   stats.ts           percentile, quantile, scoring, career-track weights, gaps
   references.ts      published benchmark figures (with sources)
   App.tsx            page: sign-in, filters, average student or standing, metrics, moves, form
-  components/        SignIn, StripChart, ProfileForm, RequestSchool, WhatIf
+  components/        SignIn, StripChart, ProfileForm, RequestSchool, WhatIf, Progress
 supabase/
   migrations/0001_init.sql            schema, privacy functions, grants
   migrations/0002_school_email.sql    school-email sign-in, average student, differencing protection
+  migrations/0003_history.sql         your own numbers over time
   seed.sql                            starter schools and their email domains
 public/_headers      security headers (Netlify)
 vercel.json          build + security headers (Vercel)
@@ -137,4 +139,4 @@ test/                unit, database and end-to-end tests
 - **Staff and alumni addresses** on a school domain can also sign in.
 - **Changes over time.** Someone watching a small group before and after one person joins could estimate that person's numbers. Showing results only after a group grows by several people, or refreshing on a schedule, would close this.
 - **Cross-school GPA** is compared as a percentage of each school's scale, which is a rough approximation. Comparisons within one school are exact.
-- **Ideas:** track your own progress over time.
+- **Ideas:** show how your percentiles (not just your numbers) moved over time.

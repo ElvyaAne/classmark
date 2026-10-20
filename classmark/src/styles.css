@@ -104,6 +104,18 @@ input[type="range"] { padding: 0; border: 0; background: none; accent-color: var
 .whatif-result > div { display: flex; flex-direction: column; gap: 2px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; }
 .whatif-result b { font: 700 22px var(--f-display); font-variant-numeric: tabular-nums; }
 
+/* progress */
+.progress { display: flex; flex-direction: column; }
+.progress-row { display: grid; grid-template-columns: minmax(0, 1.2fr) 120px minmax(0, 1fr) 90px; gap: 14px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); }
+.progress-row:first-child { border-top: 0; }
+.progress-row svg { width: 120px; height: 28px; display: block; overflow: visible; }
+.progress-row .delta { text-align: right; font-weight: 700; }
+@media (max-width: 620px) {
+  .progress-row { grid-template-columns: minmax(0, 1fr) auto; row-gap: 4px; }
+  .progress-row svg { grid-row: span 2; order: 2; }
+  .progress-row .delta { text-align: left; }
+}
+
 /* share */
 .share { display: flex; flex-direction: column; gap: 12px; }
 .share-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }

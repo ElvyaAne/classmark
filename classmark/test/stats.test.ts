@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { percentile, quantile, ordinal, scoreMetrics, overall, gaps, withValue, METRICS, TRACKS } from "../src/stats.ts";
+import { percentile, quantile, ordinal, scoreMetrics, overall, gaps, progress, withValue, METRICS, TRACKS } from "../src/stats.ts";
 import type { ResponseInput } from "../src/api.ts";
 
 test("percentile uses mid-rank for ties", () => {
@@ -90,4 +90,19 @@ test("what-if rescoring changes one number against the same peers", () => {
   assert.equal(overall(after), 58);
   const gpa = scoreMetrics(withValue(me, "gpa_pct", 9.5), 10, peers);
   assert.equal(gpa.find((r) => r.metric.key === "gpa_pct")!.percentile, 100);
+});
+
+test("progress lists each metric's numbers over time, oldest first", () => {
+  const history = [
+    { ...me, day: "2026-09-01", leetcode: 10, gpa: 8.5, projects: null },
+    { ...me, day: "2026-09-15", leetcode: 40, gpa: 8.5, projects: 1 },
+    { ...me, day: "2026-10-01", leetcode: 75, gpa: 8.82, projects: 2 },
+  ];
+  const by = Object.fromEntries(progress(history).map((p) => [p.metric.key, p]));
+  assert.deepEqual(by.leetcode.points.map((p) => p.value), [10, 40, 75]);
+  assert.equal(by.leetcode.change, 65);
+  assert.equal(by.gpa_pct.first, 8.5);
+  assert.equal(by.gpa_pct.change, 0.32);
+  assert.deepEqual(by.projects.points.map((p) => p.day), ["2026-09-15", "2026-10-01"], "blank days are skipped");
+  assert.equal(progress([]).length, 0);
 });

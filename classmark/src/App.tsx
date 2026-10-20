@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   PROGRAMS, sessionFromUrlHash,
-  type AverageStudent, type Api, type Me, type PeerStats, type ResponseInput, type SavedResponse, type School,
+  type AverageStudent, type Api, type HistoryPoint, type Me, type PeerStats, type ResponseInput, type SavedResponse, type School,
 } from "./api";
 import { METRICS, MIN_PEERS, TRACKS, gaps, ordinal, overall, scoreMetrics, type Metric, type MetricResult, type Weights } from "./stats";
 import { REFERENCES } from "./references";
@@ -10,6 +10,7 @@ import { ProfileForm } from "./components/ProfileForm";
 import { RequestSchool } from "./components/RequestSchool";
 import { SignIn } from "./components/SignIn";
 import { WhatIf } from "./components/WhatIf";
+import { Progress } from "./components/Progress";
 
 interface Filters {
   school: string; // slug or "all"
@@ -45,6 +46,7 @@ function Classmark({ api, captchaKey }: { api: Api; captchaKey?: string }) {
   const [schools, setSchools] = useState<School[] | null>(null);
   const [who, setWho] = useState<Me | null>(null);
   const [mine, setMine] = useState<SavedResponse | null>(null);
+  const [myHistory, setMyHistory] = useState<HistoryPoint[]>([]);
   const [filters, setFilters] = useState<Filters | null>(null);
   const [stats, setStats] = useState<PeerStats | null>(null);
   const [avg, setAvg] = useState<AverageStudent | null>(null);
@@ -71,6 +73,7 @@ function Classmark({ api, captchaKey }: { api: Api; captchaKey?: string }) {
     const saved = ok ? await api.getMyResponse().catch(() => null) : null;
     setWho(me);
     setMine(saved);
+    setMyHistory(saved ? await api.getMyHistory().catch(() => []) : []);
     if (saved) return { school: saved.school_slug, program: saved.program, year: String(saved.year) };
     if (ok) return { school: me!.school_slug!, program: "all", year: "all" };
     const fromUrl = initialSchoolFromUrl();
@@ -153,6 +156,7 @@ function Classmark({ api, captchaKey }: { api: Api; captchaKey?: string }) {
       const saved = await api.saveMyResponse(r);
       const first = !mine;
       setMine(saved);
+      setMyHistory(await api.getMyHistory().catch(() => []));
       setSchools(await api.listSchools());
       if (first) setFilters({ school: saved.school_slug, program: saved.program, year: String(saved.year) });
       setNotice(first ? "Saved. Your percentiles are above." : "Updated.");
@@ -168,6 +172,7 @@ function Classmark({ api, captchaKey }: { api: Api; captchaKey?: string }) {
     try {
       await api.deleteMyResponse();
       setMine(null);
+      setMyHistory([]);
       setSchools(await api.listSchools());
       setNotice("Your numbers were deleted.");
     } catch (e) {
@@ -323,6 +328,13 @@ function Classmark({ api, captchaKey }: { api: Api; captchaKey?: string }) {
         <section className="panel stack" aria-labelledby="h-whatif">
           <h2 id="h-whatif">Try a what-if</h2>
           <WhatIf me={mine} scale={Number(mySchool.gpa_scale)} results={results} peerMetrics={stats?.metrics ?? null} weights={track.weights} />
+        </section>
+      )}
+
+      {verified && mine && mySchool && (
+        <section className="panel stack" aria-labelledby="h-progress">
+          <h2 id="h-progress">Your progress</h2>
+          <Progress history={myHistory} scale={Number(mySchool.gpa_scale)} />
         </section>
       )}
 

@@ -1,6 +1,6 @@
 -- Database tests: run against a fresh database with
---   psql -v ON_ERROR_STOP=1 -f test/supabase_stub.sql -f supabase/migrations/0001_init.sql \
---        -f supabase/migrations/0002_school_email.sql -f supabase/seed.sql -f test/db_test.sql
+--   psql -v ON_ERROR_STOP=1 -f test/supabase_stub.sql -f supabase/migrations/<each, in order>.sql \
+--        -f supabase/seed.sql -f test/db_test.sql
 -- Each check raises an exception on failure.
 
 create or replace function pg_temp.as_user(u int) returns void language plpgsql as $$
@@ -75,6 +75,16 @@ do $$ begin
 exception when insufficient_privilege then raise notice 'ok  anon cannot save';
 end $$;
 do $$ begin
+  perform public.get_my_history();
+  raise exception 'FAIL: anon read a history';
+exception when insufficient_privilege then raise notice 'ok  anon cannot read history';
+end $$;
+do $$ begin
+  perform * from public.response_history;
+  raise exception 'FAIL: anon read the history table';
+exception when insufficient_privilege then raise notice 'ok  anon cannot read the history table directly';
+end $$;
+do $$ begin
   perform public.peer_stats('uottawa', null, null);
   raise exception 'FAIL: anon saw distributions';
 exception when insufficient_privilege then raise notice 'ok  anon cannot see distributions';
@@ -115,6 +125,16 @@ select pg_temp.check(not (public.get_my_response() ? 'user_id'), 'response never
 select public.save_my_response('{"program":"CS & Mathematics","year":2,"gpa":8.82,
   "projects":2,"hackathons":1,"hackathon_wins":0,"leetcode":35,"internships":0,"work_months":5,"languages":6}');
 select pg_temp.check((public.get_my_response()->>'leetcode')::int = 35, 'saving again updates instead of duplicating');
+select pg_temp.check(jsonb_array_length(public.get_my_history()) = 1, 'history keeps one entry per day');
+select pg_temp.check((public.get_my_history()->0->>'leetcode')::int = 35, 'a day''s history keeps the latest save');
+select pg_temp.check(not (public.get_my_history()->0 ? 'user_id'), 'history never exposes user_id');
+reset role;
+update public.response_history set day = day - 30 where user_id = pg_temp.uid(1);
+set role authenticated;
+select public.save_my_response('{"program":"CS & Mathematics","year":2,"gpa":8.82,
+  "projects":2,"hackathons":1,"hackathon_wins":0,"leetcode":35,"internships":0,"work_months":7,"languages":6}');
+select pg_temp.check(jsonb_array_length(public.get_my_history()) = 2, 'a later day adds a new history entry');
+select pg_temp.check((public.get_my_history()->0->>'work_months')::int = 5 and (public.get_my_history()->1->>'work_months')::int = 7, 'history is oldest first');
 do $$ begin
   perform public.save_my_response('{"program":"Computer Science","year":2,"gpa":11}');
   raise exception 'FAIL: GPA above scale accepted';
@@ -138,6 +158,9 @@ select pg_temp.save(5, '{"program":"CS & Mathematics","year":2,"gpa":8.0,"projec
 set role authenticated;
 select pg_temp.as_user(1);
 select pg_temp.check((public.peer_stats('uottawa','CS & Mathematics',2)->>'n')::int = 4, 'peer count excludes the caller');
+select pg_temp.as_user(2);
+select pg_temp.check(jsonb_array_length(public.get_my_history()) = 1, 'each student only sees their own history');
+select pg_temp.as_user(1);
 select pg_temp.check(public.peer_stats('uottawa','CS & Mathematics',2)->'metrics' = 'null'::jsonb, 'distributions hidden below 5 peers');
 reset role;
 
@@ -221,6 +244,7 @@ select pg_temp.as_user(6);
 set role authenticated;
 select public.delete_my_response();
 select pg_temp.check(public.get_my_response() is null, 'student can delete their response');
+select pg_temp.check(public.get_my_history() = '[]'::jsonb, 'deleting your numbers deletes their history');
 select public.delete_my_account();
 reset role;
 select pg_temp.check(not exists (select 1 from auth.users where id = pg_temp.uid(6)), 'student can delete their account');
@@ -230,4 +254,5 @@ set role authenticated;
 select public.delete_my_account();
 reset role;
 select pg_temp.check(not exists (select 1 from public.responses r where r.user_id = pg_temp.uid(7)), 'deleting the account removes its response');
+select pg_temp.check(not exists (select 1 from public.response_history h where h.user_id = pg_temp.uid(7)), 'deleting the account removes its history');
 \echo ALL DATABASE TESTS PASSED

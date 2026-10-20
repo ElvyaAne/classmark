@@ -169,3 +169,25 @@ export function fieldOf(key: MetricKey): MetricField {
 export function withValue(me: ResponseInput, key: MetricKey, raw: number): ResponseInput {
   return { ...me, [fieldOf(key)]: raw };
 }
+
+export interface MetricProgress {
+  metric: Metric;
+  points: { day: string; value: number }[]; // raw values, oldest first
+  first: number;
+  last: number;
+  change: number;
+}
+
+/** Your own numbers over time, per metric, skipping days a metric was left blank. */
+export function progress(history: readonly (ResponseInput & { day: string })[]): MetricProgress[] {
+  return METRICS.flatMap((metric) => {
+    const points = history
+      .map((h) => ({ day: h.day, value: h[fieldOf(metric.key)] }))
+      .filter((p): p is { day: string; value: number } => p.value != null)
+      .map((p) => ({ day: p.day, value: Number(p.value) }));
+    if (points.length === 0) return [];
+    const first = points[0].value;
+    const last = points[points.length - 1].value;
+    return [{ metric, points, first, last, change: Math.round((last - first) * 100) / 100 }];
+  });
+}
