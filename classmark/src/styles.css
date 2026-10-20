@@ -94,6 +94,16 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
 .moves li { display: grid; grid-template-columns: auto 1fr; gap: 12px; align-items: start; }
 .tag { font: 700 11px var(--f-mono); padding: 3px 7px; border-radius: 4px; background: var(--you-soft); color: var(--you); white-space: nowrap; }
 
+/* what-if */
+.whatif-controls { display: flex; gap: 14px; flex-wrap: wrap; align-items: end; }
+.whatif-controls .field { flex: 0 1 220px; }
+.whatif-controls .field.grow { flex: 1 1 260px; }
+.whatif-controls label { display: flex; justify-content: space-between; gap: 8px; }
+input[type="range"] { padding: 0; border: 0; background: none; accent-color: var(--you); height: 28px; }
+.whatif-result { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+.whatif-result > div { display: flex; flex-direction: column; gap: 2px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; }
+.whatif-result b { font: 700 22px var(--f-display); font-variant-numeric: tabular-nums; }
+
 /* share */
 .share { display: flex; flex-direction: column; gap: 12px; }
 .share-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }

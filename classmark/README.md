@@ -11,6 +11,8 @@ A peer benchmark for computer science and adjacent students. Verify with your sc
 - **Per-metric percentiles** (mid-rank method) and an **overall standing**, which is the mean of your metric percentiles
 - **Dot-plot distributions**, showing every anonymous peer, the median, and you
 - **Next moves**: your weakest metrics, each with the 75th-percentile value to aim for
+- **Career tracks**: weigh the overall standing and next moves for software engineering, ML / research or quant instead of counting every metric the same. The weights are a rough guide (`TRACKS` in `src/stats.ts`), and the choice is remembered in the browser.
+- **What-if slider**: move one of your numbers ("if I solve 50 more LeetCode problems…") and see the new percentile and overall standing against the same peers. It runs in the browser only; nothing is saved.
 - **Multi-school**: each school has its own GPA scale (4.0, 4.3, 10-point, 12-point, percentage) and email domain. Students can request new schools, which go live once an admin approves them.
 - **Filters**: your school or all schools, any program, any year
 - **Share links**: `/?school=uottawa` opens on a school, for growing the sample
@@ -116,10 +118,10 @@ The database and end-to-end tests run on plain PostgreSQL. `test/supabase_stub.s
 ```
 src/
   api.ts             email sign-in + RPC client
-  stats.ts           percentile, quantile, scoring, gaps
+  stats.ts           percentile, quantile, scoring, career-track weights, gaps
   references.ts      published benchmark figures (with sources)
   App.tsx            page: sign-in, filters, average student or standing, metrics, moves, form
-  components/        SignIn, StripChart, ProfileForm, RequestSchool
+  components/        SignIn, StripChart, ProfileForm, RequestSchool, WhatIf
 supabase/
   migrations/0001_init.sql            schema, privacy functions, grants
   migrations/0002_school_email.sql    school-email sign-in, average student, differencing protection
@@ -135,4 +137,4 @@ test/                unit, database and end-to-end tests
 - **Staff and alumni addresses** on a school domain can also sign in.
 - **Changes over time.** Someone watching a small group before and after one person joins could estimate that person's numbers. Showing results only after a group grows by several people, or refreshing on a schedule, would close this.
 - **Cross-school GPA** is compared as a percentage of each school's scale, which is a rough approximation. Comparisons within one school are exact.
-- **Ideas:** track your own progress over time, add metric weights per career track (SWE, ML, quant), and add a "what-if" slider ("if I solve 50 more LeetCode problems…").
+- **Ideas:** track your own progress over time.

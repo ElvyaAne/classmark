@@ -100,9 +100,27 @@ with sync_playwright() as p:
     page.screenshot(path=f"{SHOTS}/desktop-light.png", full_page=True)
     step("per-metric percentiles and next moves render")
 
+    expect(page.get_by_role("heading", name="Try a what-if")).to_be_visible()
+    page.select_option("#wi-metric", label="LeetCode solved")
+    expect(page.locator("label[for=wi-value] output")).to_have_text("29")
+    page.locator("#wi-value").focus()
+    page.keyboard.press("End")
+    expect(page.locator("label[for=wi-value] output")).to_have_text("500")
+    expect(page.locator(".whatif-result b").first.locator(".you-line")).to_have_text("100th")
+    expect(page.locator(".row").filter(has_text="LeetCode").locator(".val")).to_have_text("29")
+    page.get_by_role("button", name="Back to my number").click()
+    expect(page.locator("label[for=wi-value] output")).to_have_text("29")
+    step("what-if: moving LeetCode to 500 shows the new percentile without touching saved numbers")
+
+    page.select_option("#f-track", "swe")
+    expect(page.get_by_text("Weighted for software engineering")).to_be_visible()
+    expect(page.locator(".big")).to_have_text(re.compile(r"^\d+(st|nd|rd|th)$"))
+    step(f"career track: SWE weighting gives {page.locator('.big').inner_text()} (balanced was {standing})")
+
     page.reload()
     expect(page.get_by_role("button", name="Update my numbers")).to_be_visible()
     expect(page.locator("#pf-leetcode")).to_have_value("29")
+    expect(page.locator("#f-track")).to_have_value("swe")
     step("reload: still signed in, numbers kept")
 
     page.fill("#pf-leetcode", "60")

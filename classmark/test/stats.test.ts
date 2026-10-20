@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { percentile, quantile, ordinal, scoreMetrics, overall, gaps, METRICS } from "../src/stats.ts";
+import { percentile, quantile, ordinal, scoreMetrics, overall, gaps, withValue, METRICS, TRACKS } from "../src/stats.ts";
 import type { ResponseInput } from "../src/api.ts";
 
 test("percentile uses mid-rank for ties", () => {
@@ -54,4 +54,40 @@ test("no profile yet means no percentiles but distributions still show", () => {
   assert.equal(results.find((r) => r.metric.key === "projects")!.percentile, null);
   assert.deepEqual(results.find((r) => r.metric.key === "projects")!.peers, [0, 1, 2, 3, 4]);
   assert.equal(overall(results), null);
+});
+
+const peers = {
+  gpa_pct: [60, 75, 80, 85, 91],   // you: 88.2 → 80th
+  projects: [0, 1, 2, 3, 4],       // you: 2 → 50th
+  leetcode: [10, 40, 60, 150, 300], // you: 29 → 20th
+  internships: [0, 0, 1, 1, 2],    // you: 0 → 20th
+};
+const track = (k: string) => TRACKS.find((t) => t.key === k)!.weights;
+
+test("career tracks weight the overall standing", () => {
+  const results = scoreMetrics(me, 10, peers);
+  assert.equal(overall(results), 43); // (80 + 50 + 20 + 20) / 4
+  assert.equal(overall(results, track("balanced")), 43);
+  // SWE: leetcode ×3, internships ×3, projects ×2 → (80 + 100 + 60 + 60) / 9
+  assert.equal(overall(results, track("swe")), 33);
+  // ML: GPA ×3, projects ×3, internships ×2 → (240 + 150 + 20 + 40) / 9
+  assert.equal(overall(results, track("ml")), 50);
+});
+
+test("next moves follow the track: biggest weighted lift first", () => {
+  const results = scoreMetrics(me, 10, peers);
+  assert.deepEqual(gaps(results).map((g) => g.metric.key), ["leetcode", "internships", "projects"]);
+  assert.deepEqual(gaps(results, 4, track("ml")).map((g) => g.metric.key), ["internships", "leetcode", "projects"]);
+  assert.deepEqual(gaps(results, 1, track("swe")).map((g) => g.metric.key), ["leetcode"]);
+});
+
+test("what-if rescoring changes one number against the same peers", () => {
+  const more = withValue(me, "leetcode", 200);
+  assert.equal(more.leetcode, 200);
+  assert.equal(me.leetcode, 29, "your saved numbers are untouched");
+  const after = scoreMetrics(more, 10, peers);
+  assert.equal(after.find((r) => r.metric.key === "leetcode")!.percentile, 80);
+  assert.equal(overall(after), 58);
+  const gpa = scoreMetrics(withValue(me, "gpa_pct", 9.5), 10, peers);
+  assert.equal(gpa.find((r) => r.metric.key === "gpa_pct")!.percentile, 100);
 });
