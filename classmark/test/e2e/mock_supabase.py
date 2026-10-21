@@ -105,6 +105,10 @@ class Handler(SimpleHTTPRequestHandler):
             code, uid = CODES.pop(email, ("", ""))
             ok, out = psql(f"update auth.users set email_confirmed_at = now() where id = '{uid}'") if uid else (False, "")
             return self.send_json(200 if ok else 404, {"user_id": uid})
+        if path == "/__test/user":  # whether an account still exists for an address
+            email = parse_qs(urlparse(self.path).query).get("email", [""])[0]
+            ok, out = psql(f"select count(*) from auth.users where lower(email) = lower({lit(email)})")
+            return self.send_json(200, {"exists": ok and out.strip() != "0"})
         if path == "/__test/backdate":  # moves a student's saved history into the past
             q = parse_qs(urlparse(self.path).query)
             email, days = q.get("email", [""])[0], int(q.get("days", ["0"])[0])

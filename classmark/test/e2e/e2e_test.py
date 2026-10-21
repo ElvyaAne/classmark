@@ -156,6 +156,18 @@ with sync_playwright() as p:
     expect(page.locator("#f-school option[value=york]")).to_have_count(0)
     step("school request (with email domain) accepted and hidden until approved")
 
+    # ------------------------------------------------------------ returning student signs in with a new code
+    page.get_by_role("button", name="Sign out").click()
+    expect(page.get_by_role("heading", name="The average student")).to_be_visible()
+    page.fill("#si-email", EMAIL.upper())
+    page.get_by_role("button", name="Email me a code").click()
+    expect(page.get_by_text("We emailed a code to")).to_be_visible()
+    page.fill("#si-code", page.request.get(f"{BASE}/__test/otp?email={EMAIL}").json()["code"])
+    page.get_by_role("button", name="Verify").click()
+    expect(page.get_by_role("heading", name="Overall standing")).to_be_visible()
+    expect(page.locator("#pf-leetcode")).to_have_value("60")
+    step("sign in again: a returning student gets their saved numbers back")
+
     page.get_by_role("button", name="Delete my numbers").click()
     page.get_by_role("button", name="Delete", exact=True).click()
     expect(page.get_by_text("Your numbers were deleted.")).to_be_visible()
@@ -182,7 +194,21 @@ with sync_playwright() as p:
     page.get_by_role("button", name="Delete account").click()
     expect(page.get_by_text("Your account and numbers were deleted.")).to_be_visible()
     expect(page.get_by_role("heading", name="The average student")).to_be_visible()
-    step("delete account signs you out")
+    uid_gone = page.request.get(f"{BASE}/__test/user?email={EMAIL}").json()
+    assert uid_gone["exists"] is False, "account still in auth.users after deletion"
+    step("delete account signs you out and removes the account")
+
+    page.fill("#si-email", EMAIL)
+    page.get_by_role("button", name="Email me a code").click()
+    expect(page.get_by_text("We emailed a code to")).to_be_visible()
+    page.fill("#si-code", page.request.get(f"{BASE}/__test/otp?email={EMAIL}").json()["code"])
+    page.get_by_role("button", name="Verify").click()
+    expect(page.get_by_text("You're verified. Add your numbers")).to_be_visible()
+    expect(page.locator("#pf-leetcode")).to_have_value("")
+    page.get_by_role("button", name="Delete my account").click()
+    page.get_by_role("button", name="Delete account").click()
+    expect(page.get_by_text("Your account and numbers were deleted.")).to_be_visible()
+    step("sign up again after deleting: a fresh, empty account")
 
     # ------------------------------------------------------------ mobile, dark, from a share link
     m = browser.new_context(viewport={"width": 390, "height": 844}, color_scheme="dark", is_mobile=True)

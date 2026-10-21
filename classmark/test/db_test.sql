@@ -270,10 +270,17 @@ select pg_temp.check(not exists (select 1 from auth.users where id = pg_temp.uid
 select pg_temp.check((select count(*) from public.responses) = 11, 'deletes removed exactly one row');
 select pg_temp.as_user(7);
 set role authenticated;
+select public.request_school('tmu', 'Toronto Metropolitan University', 4.33, 'torontomu.ca');
 select public.delete_my_account();
 reset role;
 select pg_temp.check(not exists (select 1 from public.responses r where r.user_id = pg_temp.uid(7)), 'deleting the account removes its response');
 select pg_temp.check(not exists (select 1 from public.response_history h where h.user_id = pg_temp.uid(7)), 'deleting the account removes its history');
+select pg_temp.check(not exists (select 1 from public.published_responses p where p.user_id = pg_temp.uid(7)), 'deleting the account removes it from comparisons');
+select pg_temp.check((select requested_by from public.schools where slug = 'tmu') is null, 'deleting the account clears it from school requests');
+do $$ begin
+  perform pg_temp.student(7, 's7@uottawa.ca');
+  perform pg_temp.check(true, 'the same email can sign up again after deleting');
+end $$;
 -- ---------------------------------------------------------------- batched release
 -- New and changed numbers only become visible 5 at a time per school, program and year, so
 -- comparing a group before and after never isolates one person.

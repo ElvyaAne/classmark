@@ -52,7 +52,7 @@ One honest caveat: you, as the project admin, can join `responses` to `auth.user
 ### 1. Create the database (free)
 
 1. Create a project at [supabase.com](https://supabase.com).
-2. Open the **SQL Editor** and run each file in `supabase/migrations/` in order (`0001_init.sql` through `0004_batched_release.sql`), then `supabase/seed.sql`. The seed adds 10 Canadian schools with their email domains.
+2. Open the **SQL Editor** and run each file in `supabase/migrations/` in order (`0001_init.sql` through `0005_account_deletion.sql`), then `supabase/seed.sql`. The seed adds 10 Canadian schools with their email domains.
    - Already set up? Run only the migrations you haven't run yet. `0002` deletes any responses left over from the anonymous version, since they can't be verified. `0003` starts everyone's history from their current numbers. `0004` publishes everything already saved, then batches new changes.
 3. **Authentication → Sign In / Providers**: keep **Email** on, turn **Allow anonymous sign-ins** off.
 4. **Authentication → Emails → Templates**: in both **Confirm signup** and **Magic Link**, add the code so students can type it:
@@ -112,7 +112,7 @@ select c as cell, count(*) from _pending(), unnest(cells) c group by c order by 
 
 ```bash
 npm test                                                  # percentile math + auth client (Node test runner)
-PG_ARGS="-h localhost -U postgres" npm run test:db        # 79 database checks: sign-up guard, privacy rules, ownership, validation
+PG_ARGS="-h localhost -U postgres" npm run test:db        # 82 database checks: sign-up guard, privacy rules, ownership, validation
 PG_ARGS="-h localhost -U postgres" npm run test:e2e       # full browser flow, signed out and verified
 ```
 
@@ -132,6 +132,7 @@ supabase/
   migrations/0002_school_email.sql    school-email sign-in, average student, differencing protection
   migrations/0003_history.sql         your own numbers over time
   migrations/0004_batched_release.sql new and changed numbers become visible 5 at a time
+  migrations/0005_account_deletion.sql account deletion also clears school requests
   seed.sql                            starter schools and their email domains
 public/_headers      security headers (Netlify)
 vercel.json          build + security headers (Vercel)
