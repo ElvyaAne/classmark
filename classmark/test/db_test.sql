@@ -342,4 +342,39 @@ do $$ begin
 exception when insufficient_privilege then raise notice 'ok  nobody can force a release';
 end $$;
 reset role;
+-- ---------------------------------------------------------------- what the browser can reach at all
+-- The test stub gives anon/authenticated Supabase's default access to everything, so these catch
+-- any table or function a migration forgot to lock down.
+select pg_temp.check(
+  (select coalesce(array_agg(p.proname::text order by p.proname), '{}') from pg_proc p
+   where p.pronamespace = 'public'::regnamespace and has_function_privilege('anon', p.oid, 'execute'))
+  = array['average_student','list_schools','request_school'],
+  'signed-out visitors can call exactly 3 functions');
+select pg_temp.check(
+  (select coalesce(array_agg(p.proname::text order by p.proname), '{}') from pg_proc p
+   where p.pronamespace = 'public'::regnamespace and has_function_privilege('authenticated', p.oid, 'execute'))
+  = array['average_student','delete_my_account','delete_my_response','get_my_history','get_my_response',
+          'list_schools','peer_stats','request_school','save_my_response','whoami'],
+  'signed-in students can call exactly 10 functions');
+select pg_temp.check(not exists (
+  select 1 from pg_class c, unnest(array['anon','authenticated']) r
+  where c.relnamespace = 'public'::regnamespace and c.relkind in ('r','p','v','m','f','S')
+    and (has_table_privilege(r, c.oid, 'select,insert,update,delete,truncate,references,trigger')
+         or (c.relkind = 'S' and has_sequence_privilege(r, c.oid, 'usage,select,update')))),
+  'no table, view or sequence is readable or writable by the browser');
+select pg_temp.check(not exists (
+  select 1 from pg_proc p where p.pronamespace = 'public'::regnamespace and p.prosecdef
+    and not exists (select 1 from unnest(p.proconfig) c where c like 'search_path=%')),
+  'every privileged function pins its search_path');
+-- a table added by a future migration starts private
+create table public._future_table (x int);
+select pg_temp.check(not has_table_privilege('anon', 'public._future_table', 'select,insert,update,delete')
+                 and not has_table_privilege('authenticated', 'public._future_table', 'select,insert,update,delete'),
+  'new tables are private until shared on purpose');
+drop table public._future_table;
+-- landing-page counts follow the batched release, so they can't time one student's arrival
+select pg_temp.student(200, 'new.one@queensu.ca');
+select pg_temp.save(200, '{"program":"Statistics","year":3,"gpa":3.1}');
+select pg_temp.check((select responses from public.list_schools() where slug = 'queens') = 0,
+  'school counts ignore numbers still waiting for a batch');
 \echo ALL DATABASE TESTS PASSED

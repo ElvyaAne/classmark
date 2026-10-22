@@ -23,7 +23,7 @@ A peer benchmark for computer science and adjacent students. Verify with your sc
 
 Privacy is enforced in the database, not the UI:
 
-- Tables have row-level security on and **no direct grants**. The browser can only call a few `SECURITY DEFINER` functions; internal helpers can't be called at all.
+- Tables have row-level security on and **no direct grants**. The browser can only call a few `SECURITY DEFINER` functions; internal helpers can't be called at all. `0006_lockdown.sql` is the one list of what the browser can call, new tables start private, and the database tests fail if any other function or table becomes reachable.
 - **Signed out**: `average_student()` returns one mean per metric, never lists of values.
 - **Verified students**: `peer_stats()` returns **sorted value arrays only**, never rows or IDs.
 - **Minimum group size**: a group, or any single metric, with fewer than **5** people is hidden.
@@ -33,10 +33,22 @@ Privacy is enforced in the database, not the UI:
 - **Sign-up guard**: a trigger on `auth.users` refuses addresses outside approved school domains, so the sign-in form can't be used to email random inboxes. `save_my_response()` checks the domain again.
 - **Security headers** (`vercel.json`, `public/_headers`): a strict Content Security Policy, no framing, HSTS, nosniff.
 - **Optional CAPTCHA**: Cloudflare Turnstile on the sign-in form.
+- **No secret key anywhere near the site**: the app only uses the public anon key. The build refuses to run if a `VITE_` variable holds a secret (`service_role` or `sb_secret_`) key, and a test fails if one is ever committed.
 
 Classmark is an independent student project, not affiliated with or endorsed by the University of Ottawa or any other school.
 
 One honest caveat: you, as the project admin, can join `responses` to `auth.users` in the Supabase dashboard. The privacy promise is that other students can't see individual answers, not that the admin can't.
+
+### If Classmark were breached
+
+| What leaks | What it gets someone |
+|---|---|
+| The anon key | Nothing new. It is public by design and already in the site's JavaScript. It can list schools, see averages for groups of 5+, and request a school. |
+| A student's account | That student's own email, numbers and history, and the same anonymous peer distributions any student sees. No one else's rows or emails. |
+| The `service_role` / secret key | Everything: every email joined to its numbers and history. The site never uses this key, so the only places it exists are the Supabase dashboard and wherever you copy it. Don't. If it ever leaks, rotate it in Supabase → Project Settings → API Keys. |
+| The whole database (your Supabase login, or a backup) | Everything above, plus sign-in times and IP addresses that Supabase Auth keeps. Turn on two-factor sign-in for Supabase, GitHub and the email account behind them; that is what stands between an attacker and the dashboard. |
+
+The server has to know which numbers are yours to show them back to you, so anyone with full database access can link them to your email. What protects students is that the database only stores school, program, year and the eight numbers: no names, no grades by course, no free text.
 
 ## Stack
 
@@ -52,7 +64,7 @@ One honest caveat: you, as the project admin, can join `responses` to `auth.user
 ### 1. Create the database (free)
 
 1. Create a project at [supabase.com](https://supabase.com).
-2. Open the **SQL Editor** and run each file in `supabase/migrations/` in order (`0001_init.sql` through `0005_account_deletion.sql`), then `supabase/seed.sql`. The seed adds 10 Canadian schools with their email domains.
+2. Open the **SQL Editor** and run each file in `supabase/migrations/` in order (`0001_init.sql` through `0006_lockdown.sql`), then `supabase/seed.sql`. The seed adds 10 Canadian schools with their email domains.
    - Already set up? Run only the migrations you haven't run yet. `0002` deletes any responses left over from the anonymous version, since they can't be verified. `0003` starts everyone's history from their current numbers. `0004` publishes everything already saved, then batches new changes.
 3. **Authentication → Sign In / Providers**: keep **Email** on, turn **Allow anonymous sign-ins** off.
 4. **Authentication → Emails → Templates**: in both **Confirm signup** and **Magic Link**, add the code so students can type it:
@@ -112,7 +124,7 @@ select c as cell, count(*) from _pending(), unnest(cells) c group by c order by 
 
 ```bash
 npm test                                                  # percentile math + auth client (Node test runner)
-PG_ARGS="-h localhost -U postgres" npm run test:db        # 82 database checks: sign-up guard, privacy rules, ownership, validation
+PG_ARGS="-h localhost -U postgres" npm run test:db        # 88 database checks: sign-up guard, privacy rules, ownership, validation, exact API surface
 PG_ARGS="-h localhost -U postgres" npm run test:e2e       # full browser flow, signed out and verified
 ```
 
@@ -123,6 +135,7 @@ The database and end-to-end tests run on plain PostgreSQL. `test/supabase_stub.s
 ```
 src/
   api.ts             email sign-in + RPC client
+  keys.ts            spots secret Supabase keys (used by the build and tests, not the browser)
   stats.ts           percentile, quantile, scoring, career-track weights, gaps
   references.ts      published benchmark figures (with sources)
   App.tsx            page: sign-in, filters, average student or standing, metrics, moves, form
@@ -133,6 +146,7 @@ supabase/
   migrations/0003_history.sql         your own numbers over time
   migrations/0004_batched_release.sql new and changed numbers become visible 5 at a time
   migrations/0005_account_deletion.sql account deletion also clears school requests
+  migrations/0006_lockdown.sql        new tables private by default; the full list of callable functions
   seed.sql                            starter schools and their email domains
 public/_headers      security headers (Netlify)
 vercel.json          build + security headers (Vercel)
