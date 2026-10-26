@@ -75,17 +75,22 @@ with sync_playwright() as p:
     # ------------------------------------------------------------ save numbers
     page.select_option("#pf-program", "CS & Mathematics")
     page.select_option("#pf-year", "2")
+    expect(page.locator("#pf-hackathons")).to_have_count(0)  # extras start folded away
+    page.get_by_role("button", name=re.compile("Add hackathons")).click()
+    page.get_by_role("radio", name="25–75").click()  # quick pick fills the number
+    expect(page.locator("#pf-leetcode")).to_have_value("50")
+    step("quick-pick ranges fill in the number; extra questions fold out on demand")
     for field, val in {"gpa": "8.82", "projects": "2", "hackathons": "1", "hackathon_wins": "0", "leetcode": "29",
                        "internships": "0", "work_months": "5", "languages": "6"}.items():
         page.fill(f"#pf-{field}", val)
 
     page.fill("#pf-gpa", "11")
-    page.get_by_role("button", name="Save and see my percentiles").click()
+    page.get_by_role("button", name="See where I stand").click()
     expect(page.get_by_role("alert")).to_contain_text("can't be above 10")
     page.fill("#pf-gpa", "8.82")
     step("GPA above the school's scale is caught before saving")
 
-    page.get_by_role("button", name="Save and see my percentiles").click()
+    page.get_by_role("button", name="See where I stand").click()
     expect(page.get_by_text("Saved. Your percentiles are above.")).to_be_visible()
     expect(page.locator(".big")).to_have_text(re.compile(r"^\d+(st|nd|rd|th)$"))
     expect(page.locator("#f-program")).to_have_value("CS & Mathematics")
@@ -101,12 +106,12 @@ with sync_playwright() as p:
     step("per-metric percentiles and next moves render")
 
     page.reload()
-    expect(page.get_by_role("button", name="Update my numbers")).to_be_visible()
+    expect(page.get_by_role("button", name="Update my answers")).to_be_visible()
     expect(page.locator("#pf-leetcode")).to_have_value("29")
     step("reload: still signed in, numbers kept")
 
     page.fill("#pf-leetcode", "60")
-    page.get_by_role("button", name="Update my numbers").click()
+    page.get_by_role("button", name="Update my answers").click()
     expect(page.get_by_text("Updated.")).to_be_visible()
     expect(page.locator(".row").filter(has_text="LeetCode").locator(".val")).to_have_text("60")
     step("update changes your numbers in place")

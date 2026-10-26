@@ -3,7 +3,7 @@ import {
   PROGRAMS, sessionFromUrlHash,
   type AverageStudent, type Api, type Me, type PeerStats, type ResponseInput, type SavedResponse, type School,
 } from "./api";
-import { METRICS, MIN_PEERS, gaps, ordinal, overall, scoreMetrics, type Metric, type MetricResult } from "./stats";
+import { METRICS, MIN_PEERS, gaps, ordinal, overall, plainRead, scoreMetrics, tier, type Metric, type MetricResult } from "./stats";
 import { REFERENCES } from "./references";
 import { StripChart } from "./components/StripChart";
 import { ProfileForm } from "./components/ProfileForm";
@@ -102,6 +102,7 @@ function Classmark({ api, captchaKey }: { api: Api; captchaKey?: string }) {
   const myScale = mySchool?.gpa_scale ?? 4;
   const results = useMemo(() => scoreMetrics(mine, myScale, stats?.metrics ?? null), [mine, myScale, stats]);
   const standing = overall(results);
+  const read = plainRead(results, standing);
   const group = verified ? stats : avg;
   const n = group?.n ?? 0;
   const totalResponses = (schools ?? []).reduce((a, s) => a + Number(s.responses), 0);
@@ -260,6 +261,13 @@ function Classmark({ api, captchaKey }: { api: Api; captchaKey?: string }) {
             <h2 id="h-stand">The average student</h2>
             <p className="muted small">{averageNote(avg, filterSchool?.name ?? null)}</p>
             <span className="chip">{avg == null ? "Loading…" : `${n} ${n === 1 ? "student" : "students"} in this group`}</span>
+          </div>
+        )}
+        {verified && read && (
+          <div className="read">
+            <span className="eyebrow">In plain words</span>
+            <p><b>{read.headline}</b></p>
+            {read.detail && <p className="muted">{read.detail}</p>}
           </div>
         )}
       </section>
@@ -443,7 +451,8 @@ function MetricRow({ r, me, scale, enough }: { r: MetricResult; me: SavedRespons
     ? [Math.min(50, ...all), 100]
     : [0, Math.max(1, ...all)];
   const shown = you == null ? (me ? "not set" : "—") : metric.key === "gpa_pct" && me?.gpa != null ? `${me.gpa} / ${scale}` : metric.format(you);
-  const tone = p == null ? "none" : p >= 60 ? "good" : p >= 40 ? "mid" : "low";
+  const t = p == null ? null : tier(p);
+  const tone = t ? t.tone : "none";
   return (
     <div className="row">
       <div className="name">
@@ -454,7 +463,7 @@ function MetricRow({ r, me, scale, enough }: { r: MetricResult; me: SavedRespons
       <div className="pct">
         <b className={`tone-${tone}`}>{p != null ? ordinal(p) : "—"}</b>
         <span className="small muted">
-          {p != null ? "percentile" : !enough ? `needs ${MIN_PEERS} peers` : !me ? "add yours" : you == null ? "not set" : "too few answers"}
+          {t ? <span className={`word tone-${t.tone}`}>{t.word}</span> : !enough ? `needs ${MIN_PEERS} peers` : !me ? "add yours" : you == null ? "not set" : "too few answers"}
         </span>
       </div>
     </div>
@@ -467,9 +476,9 @@ function Moves({ results, me }: { results: MetricResult[]; me: SavedResponse | n
   const scored = results.some((r) => r.percentile != null);
   const items = scored
     ? weak.map((g) => ({
-        tag: `${ordinal(g.percentile!)} pct`,
+        tag: tier(g.percentile!).word,
         title: g.metric.label,
-        text: `${g.metric.advice} The 75th percentile here is ${g.metric.format(g.metric.key === "gpa_pct" ? round(g.p75!) : Math.ceil(g.p75!))}; you have ${g.metric.format(g.you!)}.`,
+        text: `${g.metric.advice} Students a step ahead of you in this group have about ${g.metric.format(g.metric.key === "gpa_pct" ? round(g.p75!) : Math.ceil(g.p75!))}; you're at ${g.metric.format(g.you!)}.`,
       }))
     : fallbackMoves(me, results);
   if (items.length === 0) {

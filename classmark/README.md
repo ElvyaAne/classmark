@@ -8,6 +8,8 @@ A peer benchmark for computer science and adjacent students. Verify with your sc
 
 - **School-email sign-in**: a one-time code (or link) sent to a school address. No passwords. Your school is decided by your email domain (`@uottawa.ca` → University of Ottawa), so nobody can pose as another school's student.
 - **Average student for visitors**: signed out, you see one average per metric for any school, program and year. Distributions and percentiles need a verified school email.
+- **Quick answers**: each question is a row of ranges to tap ("25–75 LeetCode problems"), with an optional box for the exact number. Only GPA, projects, internships and LeetCode show at first; the rest fold out, and a meter shows how complete your picture is.
+- **Plain-language results**: a short "in plain words" read (your strongest area and your biggest gap) and a word for each metric ("A strength", "On par", "Room to grow") alongside the percentile
 - **Per-metric percentiles** (mid-rank method) and an **overall standing**, which is the mean of your metric percentiles
 - **Dot-plot distributions**, showing every anonymous peer, the median, and you
 - **Next moves**: your weakest metrics, each with the 75th-percentile value to aim for
