@@ -41,6 +41,11 @@ export interface SavedResponse extends ResponseInput {
   updated_at: string;
 }
 
+/** One day's numbers from your own history (the latest save that day). */
+export interface HistoryPoint extends ResponseInput {
+  day: string; // YYYY-MM-DD
+}
+
 export type MetricKey =
   | "gpa_pct" | "projects" | "hackathons" | "hackathon_wins"
   | "leetcode" | "internships" | "work_months" | "languages";
@@ -233,6 +238,7 @@ export function createApi(url: string, anonKey: string, fetchImpl: typeof fetch 
     peerStats: (school: string | null, program: string | null, year: number | null) =>
       rpc<PeerStats>("peer_stats", { p_school: school, p_program: program, p_year: year }, "required"),
     getMyResponse: () => rpc<SavedResponse | null>("get_my_response", {}, "required"),
+    getMyHistory: () => rpc<HistoryPoint[]>("get_my_history", {}, "required"),
     saveMyResponse: (r: ResponseInput) => rpc<SavedResponse>("save_my_response", { p: r }, "required"),
     deleteMyResponse: () => rpc<null>("delete_my_response", {}, "required"),
     deleteMyAccount: async () => {

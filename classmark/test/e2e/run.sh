@@ -5,9 +5,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 PG_ARGS=${PG_ARGS:-"-h localhost -U postgres"}
+MIGRATIONS=(); for f in supabase/migrations/*.sql; do MIGRATIONS+=(-f "$f"); done
 DB=classmark_e2e
 psql $PG_ARGS -qc "drop database if exists $DB" -c "create database $DB"
-psql $PG_ARGS -d $DB -q -v ON_ERROR_STOP=1 -f test/supabase_stub.sql -f supabase/migrations/0001_init.sql -f supabase/migrations/0002_school_email.sql -f supabase/seed.sql >/dev/null
+psql $PG_ARGS -d $DB -q -v ON_ERROR_STOP=1 -f test/supabase_stub.sql "${MIGRATIONS[@]}" -f supabase/seed.sql >/dev/null
 
 # six other verified students in the same group
 psql $PG_ARGS -d $DB -q -v ON_ERROR_STOP=1 <<'SQL'

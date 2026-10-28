@@ -8,6 +8,9 @@ on:
     - cron: "17 11 * * *"   # daily, 07:17 Toronto (EDT)
   workflow_dispatch:
 
+# The ping needs no access to the repo, so the job gets none.
+permissions: {}
+
 jobs:
   ping:
     runs-on: ubuntu-latest

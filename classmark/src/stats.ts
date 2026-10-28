@@ -104,17 +104,90 @@ export function scoreMetrics(
   });
 }
 
-/** Overall standing: mean of the per-metric percentiles that exist. */
-export function overall(results: MetricResult[]): number | null {
-  const ps = results.map((r) => r.percentile).filter((p): p is number => p != null);
-  if (ps.length === 0) return null;
-  return Math.round(ps.reduce((a, b) => a + b, 0) / ps.length);
+export type Weights = Record<MetricKey, number>;
+
+export interface Track {
+  key: string;
+  label: string;
+  blurb: string;
+  weights: Weights;
 }
 
-/** Weakest metrics first, only those below the 60th percentile. */
-export function gaps(results: MetricResult[], limit = 4): MetricResult[] {
+const EVEN: Weights = {
+  gpa_pct: 1, projects: 1, hackathons: 1, hackathon_wins: 1, leetcode: 1, internships: 1, work_months: 1, languages: 1,
+};
+
+/** How much each metric counts toward the overall standing for a career goal. A rough guide, not a hiring formula. */
+export const TRACKS: Track[] = [
+  { key: "balanced", label: "Balanced", blurb: "Every metric counts the same.", weights: EVEN },
+  {
+    key: "swe", label: "Software engineering",
+    blurb: "Internships and interview practice count most, then finished projects.",
+    weights: { ...EVEN, leetcode: 3, internships: 3, projects: 2 },
+  },
+  {
+    key: "ml", label: "ML / research",
+    blurb: "GPA and finished projects count most (grad school and research labs look there first), then internships.",
+    weights: { ...EVEN, gpa_pct: 3, projects: 3, internships: 2 },
+  },
+  {
+    key: "quant", label: "Quant",
+    blurb: "GPA and problem solving count most, then internships.",
+    weights: { ...EVEN, gpa_pct: 3, leetcode: 3, internships: 2 },
+  },
+];
+
+/** Overall standing: mean of the per-metric percentiles that exist, weighted by track (even by default). */
+export function overall(results: MetricResult[], weights: Weights = EVEN): number | null {
+  let sum = 0;
+  let total = 0;
+  for (const r of results) {
+    const w = weights[r.metric.key];
+    if (r.percentile == null || !w) continue;
+    sum += r.percentile * w;
+    total += w;
+  }
+  return total === 0 ? null : Math.round(sum / total);
+}
+
+/** Metrics below the 60th percentile, the ones that would lift the (weighted) standing most first. */
+export function gaps(results: MetricResult[], limit = 4, weights: Weights = EVEN): MetricResult[] {
+  const lift = (r: MetricResult) => (60 - (r.percentile ?? 60)) * weights[r.metric.key];
   return results
-    .filter((r) => r.percentile != null && r.percentile < 60)
-    .sort((a, b) => (a.percentile ?? 0) - (b.percentile ?? 0))
+    .filter((r) => r.percentile != null && r.percentile < 60 && weights[r.metric.key] > 0)
+    .sort((a, b) => lift(b) - lift(a) || (a.percentile ?? 0) - (b.percentile ?? 0))
     .slice(0, limit);
+}
+
+/** The response field behind a metric (GPA is stored raw, on the school's scale). */
+export type MetricField = Exclude<keyof ResponseInput, "school_slug" | "program" | "year">;
+export function fieldOf(key: MetricKey): MetricField {
+  return key === "gpa_pct" ? "gpa" : key;
+}
+
+/** Your numbers with one field changed, for "what if" scoring against the same peers. */
+export function withValue(me: ResponseInput, key: MetricKey, raw: number): ResponseInput {
+  return { ...me, [fieldOf(key)]: raw };
+}
+
+export interface MetricProgress {
+  metric: Metric;
+  points: { day: string; value: number }[]; // raw values, oldest first
+  first: number;
+  last: number;
+  change: number;
+}
+
+/** Your own numbers over time, per metric, skipping days a metric was left blank. */
+export function progress(history: readonly (ResponseInput & { day: string })[]): MetricProgress[] {
+  return METRICS.flatMap((metric) => {
+    const points = history
+      .map((h) => ({ day: h.day, value: h[fieldOf(metric.key)] }))
+      .filter((p): p is { day: string; value: number } => p.value != null)
+      .map((p) => ({ day: p.day, value: Number(p.value) }));
+    if (points.length === 0) return [];
+    const first = points[0].value;
+    const last = points[points.length - 1].value;
+    return [{ metric, points, first, last, change: Math.round((last - first) * 100) / 100 }];
+  });
 }

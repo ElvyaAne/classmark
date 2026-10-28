@@ -1,19 +1,32 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   PROGRAMS, sessionFromUrlHash,
-  type AverageStudent, type Api, type Me, type PeerStats, type ResponseInput, type SavedResponse, type School,
+  type AverageStudent, type Api, type HistoryPoint, type Me, type PeerStats, type ResponseInput, type SavedResponse, type School,
 } from "./api";
-import { METRICS, MIN_PEERS, gaps, ordinal, overall, scoreMetrics, type Metric, type MetricResult } from "./stats";
+import { METRICS, MIN_PEERS, TRACKS, gaps, ordinal, overall, scoreMetrics, type Metric, type MetricResult, type Weights } from "./stats";
 import { REFERENCES } from "./references";
 import { StripChart } from "./components/StripChart";
 import { ProfileForm } from "./components/ProfileForm";
 import { RequestSchool } from "./components/RequestSchool";
 import { SignIn } from "./components/SignIn";
+import { WhatIf } from "./components/WhatIf";
+import { Progress } from "./components/Progress";
 
 interface Filters {
   school: string; // slug or "all"
   program: string; // program or "all"
   year: string; // "1".."6" or "all"
+}
+
+const TRACK_KEY = "classmark.track";
+
+function savedTrack(): string {
+  try {
+    const k = localStorage.getItem(TRACK_KEY);
+    return TRACKS.some((t) => t.key === k) ? k! : "balanced";
+  } catch {
+    return "balanced";
+  }
 }
 
 function initialSchoolFromUrl(): string | null {
@@ -33,6 +46,7 @@ function Classmark({ api, captchaKey }: { api: Api; captchaKey?: string }) {
   const [schools, setSchools] = useState<School[] | null>(null);
   const [who, setWho] = useState<Me | null>(null);
   const [mine, setMine] = useState<SavedResponse | null>(null);
+  const [myHistory, setMyHistory] = useState<HistoryPoint[]>([]);
   const [filters, setFilters] = useState<Filters | null>(null);
   const [stats, setStats] = useState<PeerStats | null>(null);
   const [avg, setAvg] = useState<AverageStudent | null>(null);
@@ -42,6 +56,13 @@ function Classmark({ api, captchaKey }: { api: Api; captchaKey?: string }) {
   const [authNotice, setAuthNotice] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [confirmLeave, setConfirmLeave] = useState(false);
+  const [trackKey, setTrackKey] = useState(savedTrack);
+  const track = TRACKS.find((t) => t.key === trackKey) ?? TRACKS[0];
+
+  function pickTrack(k: string) {
+    setTrackKey(k);
+    try { localStorage.setItem(TRACK_KEY, k); } catch { /* remembered for this visit only */ }
+  }
 
   const verified = !!(who?.verified && who.school_slug);
 
@@ -52,6 +73,7 @@ function Classmark({ api, captchaKey }: { api: Api; captchaKey?: string }) {
     const saved = ok ? await api.getMyResponse().catch(() => null) : null;
     setWho(me);
     setMine(saved);
+    setMyHistory(saved ? await api.getMyHistory().catch(() => []) : []);
     if (saved) return { school: saved.school_slug, program: saved.program, year: String(saved.year) };
     if (ok) return { school: me!.school_slug!, program: "all", year: "all" };
     const fromUrl = initialSchoolFromUrl();
@@ -101,7 +123,7 @@ function Classmark({ api, captchaKey }: { api: Api; captchaKey?: string }) {
   const mySchool = who?.school_slug ? schoolBySlug.get(who.school_slug) ?? null : null;
   const myScale = mySchool?.gpa_scale ?? 4;
   const results = useMemo(() => scoreMetrics(mine, myScale, stats?.metrics ?? null), [mine, myScale, stats]);
-  const standing = overall(results);
+  const standing = overall(results, track.weights);
   const group = verified ? stats : avg;
   const n = group?.n ?? 0;
   const totalResponses = (schools ?? []).reduce((a, s) => a + Number(s.responses), 0);
@@ -134,6 +156,7 @@ function Classmark({ api, captchaKey }: { api: Api; captchaKey?: string }) {
       const saved = await api.saveMyResponse(r);
       const first = !mine;
       setMine(saved);
+      setMyHistory(await api.getMyHistory().catch(() => []));
       setSchools(await api.listSchools());
       if (first) setFilters({ school: saved.school_slug, program: saved.program, year: String(saved.year) });
       setNotice(first ? "Saved. Your percentiles are above." : "Updated.");
@@ -149,6 +172,7 @@ function Classmark({ api, captchaKey }: { api: Api; captchaKey?: string }) {
     try {
       await api.deleteMyResponse();
       setMine(null);
+      setMyHistory([]);
       setSchools(await api.listSchools());
       setNotice("Your numbers were deleted.");
     } catch (e) {
@@ -242,6 +266,14 @@ function Classmark({ api, captchaKey }: { api: Api; captchaKey?: string }) {
                 {[1, 2, 3, 4, 5, 6].map((y) => <option key={y} value={y}>{y === 6 ? "6+" : `Year ${y}`}</option>)}
               </select>
             </div>
+            {verified && (
+              <div className="field">
+                <label htmlFor="f-track">Weigh for</label>
+                <select id="f-track" value={track.key} onChange={(e) => pickTrack(e.target.value)}>
+                  {TRACKS.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
+                </select>
+              </div>
+            )}
           </div>
         )}
         {verified ? (
@@ -252,6 +284,9 @@ function Classmark({ api, captchaKey }: { api: Api; captchaKey?: string }) {
             <div className="standing-text">
               <h2 id="h-stand">Overall standing</h2>
               <p className="muted small">{standingNote(!!mine, standing, n, stats == null, !!stats?.suppressed)}</p>
+              {standing != null && track.key !== "balanced" && (
+                <p className="muted small">Weighted for {track.label.toLowerCase()}: {track.blurb.charAt(0).toLowerCase() + track.blurb.slice(1)}</p>
+              )}
               <span className="chip">{stats == null ? "Loading…" : `${n} ${n === 1 ? "peer" : "peers"} in this group`}</span>
             </div>
           </div>
@@ -285,7 +320,21 @@ function Classmark({ api, captchaKey }: { api: Api; captchaKey?: string }) {
       {verified && (
         <section className="panel stack" aria-labelledby="h-moves">
           <h2 id="h-moves">What would move you up</h2>
-          <Moves results={results} me={mine} />
+          <Moves results={results} me={mine} weights={track.weights} />
+        </section>
+      )}
+
+      {verified && mine && mySchool && results.some((r) => r.peers != null) && (
+        <section className="panel stack" aria-labelledby="h-whatif">
+          <h2 id="h-whatif">Try a what-if</h2>
+          <WhatIf me={mine} scale={Number(mySchool.gpa_scale)} results={results} peerMetrics={stats?.metrics ?? null} weights={track.weights} />
+        </section>
+      )}
+
+      {verified && mine && mySchool && (
+        <section className="panel stack" aria-labelledby="h-progress">
+          <h2 id="h-progress">Your progress</h2>
+          <Progress history={myHistory} scale={Number(mySchool.gpa_scale)} />
         </section>
       )}
 
@@ -323,6 +372,8 @@ function Classmark({ api, captchaKey }: { api: Api; captchaKey?: string }) {
           <h2 id="h-me">Your numbers</h2>
           <p className="muted small">
             No name asked, and the table holding your numbers has no email column. Leave any field blank to skip it. Update or delete it any time.
+            New numbers and changes reach what classmates see in batches of {MIN_PEERS} per program and year, so nobody can work out
+            yours by comparing the page before and after you save.
           </p>
           <ProfileForm school={mySchool} initial={mine} saving={saving} onSave={save} onDelete={mine ? removeNumbers : null} />
           {notice && <p className="status" role="status">{notice}</p>}
@@ -362,7 +413,8 @@ function Classmark({ api, captchaKey }: { api: Api; captchaKey?: string }) {
           for your name, and nobody using the site, including other students, can read individual responses. Signed-out visitors only
           see averages. Verified students see sorted values for a group once at least {MIN_PEERS} people match, and any single metric
           with fewer than {MIN_PEERS} answers stays hidden. A group is also hidden when comparing it with a wider group would single out
-          fewer than {MIN_PEERS} people. GPAs are compared as a percentage of each school's scale, which is a rough way to compare
+          fewer than {MIN_PEERS} people. New and changed numbers are added {MIN_PEERS} or more at a time per school, program and year,
+          so checking a group before and after someone joins can't single them out either. GPAs are compared as a percentage of each school's scale, which is a rough way to compare
           across schools.
         </p>
         <h3>If something goes wrong</h3>
@@ -461,9 +513,9 @@ function MetricRow({ r, me, scale, enough }: { r: MetricResult; me: SavedRespons
   );
 }
 
-function Moves({ results, me }: { results: MetricResult[]; me: SavedResponse | null }) {
+function Moves({ results, me, weights }: { results: MetricResult[]; me: SavedResponse | null; weights: Weights }) {
   if (!me) return <p className="muted">Add your numbers and this turns into a ranked list of what would raise your standing most.</p>;
-  const weak = gaps(results);
+  const weak = gaps(results, 4, weights);
   const scored = results.some((r) => r.percentile != null);
   const items = scored
     ? weak.map((g) => ({
