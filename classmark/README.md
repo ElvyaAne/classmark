@@ -30,7 +30,7 @@ Privacy is enforced in the database, not the UI:
 - **Differencing protection**: a group is also hidden when a wider group (drop the school, program or year filter) has only 1 to 4 more people. Without this, subtracting "uOttawa, all programs" from "uOttawa, CS" could reveal one student's numbers. The same rule applies to each metric.
 - **Batched release**: comparisons read `published_responses`, not the live table. A new or changed response is copied there only together with at least 4 others from the same school, program and year, so comparing a group before and after someone joins or edits changes it by 0 people or by 5 or more. Deletions still take effect at once.
 - **Email stays with auth**: the `responses` table has no name or email. `get_my_response()` and `get_my_history()` only ever return the caller's own rows, and history is never used in peer comparisons.
-- **Sign-up guard**: a trigger on `auth.users` refuses addresses outside approved school domains, so the sign-in form can't be used to email random inboxes. `save_my_response()` checks the domain again.
+- **Sign-up guard**: a trigger on `auth.users` refuses addresses outside approved school domains, so the sign-in form can't be used to email random inboxes. `save_my_response()` checks the domain again. A school can never be given a free email provider (gmail.com, outlook.com…) or a shared ending like `qc.ca` as its domain, even by hand, so one careless approval can't open sign-up to everyone.
 - **Security headers** (`vercel.json`, `public/_headers`): a strict Content Security Policy, no framing, HSTS, nosniff.
 - **Optional CAPTCHA**: Cloudflare Turnstile on the sign-in form.
 - **No secret key anywhere near the site**: the app only uses the public anon key. The build refuses to run if a `VITE_` variable holds a secret (`service_role` or `sb_secret_`) key, and a test fails if one is ever committed.
@@ -64,7 +64,7 @@ The server has to know which numbers are yours to show them back to you, so anyo
 ### 1. Create the database (free)
 
 1. Create a project at [supabase.com](https://supabase.com).
-2. Open the **SQL Editor** and run each file in `supabase/migrations/` in order (`0001_init.sql` through `0006_lockdown.sql`), then `supabase/seed.sql`. The seed adds 10 Canadian schools with their email domains.
+2. Open the **SQL Editor** and run each file in `supabase/migrations/` in order (`0001_init.sql` through `0007_school_domains.sql`), then `supabase/seed.sql`. The seed adds 10 Canadian schools with their email domains.
    - Already set up? Run only the migrations you haven't run yet. `0002` deletes any responses left over from the anonymous version, since they can't be verified. `0003` starts everyone's history from their current numbers. `0004` publishes everything already saved, then batches new changes.
 3. **Authentication → Sign In / Providers**: keep **Email** on, turn **Allow anonymous sign-ins** off.
 4. **Authentication → Emails → Templates**: in both **Confirm signup** and **Magic Link**, add the code so students can type it:
@@ -104,7 +104,8 @@ Create a Turnstile widget in Cloudflare, put its **site key** in `VITE_TURNSTILE
 Run these in the Supabase SQL Editor.
 
 ```sql
--- see pending school requests (check the domain really belongs to the school before approving)
+-- see pending school requests (check the domain really belongs to the school before approving;
+-- free email providers are refused automatically, but a look-alike like uottawa-students.ca is not)
 select slug, name, country, gpa_scale, email_domains, created_at from schools where not approved;
 
 -- approve one
@@ -124,7 +125,7 @@ select c as cell, count(*) from _pending(), unnest(cells) c group by c order by 
 
 ```bash
 npm test                                                  # percentile math + auth client (Node test runner)
-PG_ARGS="-h localhost -U postgres" npm run test:db        # 88 database checks: sign-up guard, privacy rules, ownership, validation, exact API surface
+PG_ARGS="-h localhost -U postgres" npm run test:db        # 92 database checks: sign-up guard, privacy rules, ownership, validation, exact API surface
 PG_ARGS="-h localhost -U postgres" npm run test:e2e       # full browser flow, signed out and verified
 ```
 
@@ -147,6 +148,7 @@ supabase/
   migrations/0004_batched_release.sql new and changed numbers become visible 5 at a time
   migrations/0005_account_deletion.sql account deletion also clears school requests
   migrations/0006_lockdown.sql        new tables private by default; the full list of callable functions
+  migrations/0007_school_domains.sql  a school can't use gmail.com, qc.ca or another shared email domain
   seed.sql                            starter schools and their email domains
 public/_headers      security headers (Netlify)
 vercel.json          build + security headers (Vercel)

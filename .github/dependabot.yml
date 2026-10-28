@@ -1,0 +1,15 @@
+# Opens a pull request when a package the site uses (or a GitHub Action) has a security fix
+# or a new version, so updates don't depend on remembering to check.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /classmark
+    schedule:
+      interval: weekly
+    groups:
+      all:
+        patterns: ["*"]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly

@@ -377,4 +377,25 @@ select pg_temp.student(200, 'new.one@queensu.ca');
 select pg_temp.save(200, '{"program":"Statistics","year":3,"gpa":3.1}');
 select pg_temp.check((select responses from public.list_schools() where slug = 'queens') = 0,
   'school counts ignore numbers still waiting for a batch');
+-- ---------------------------------------------------------------- shared email domains
+set role anon;
+select pg_temp.as_user(null);
+do $$ begin
+  perform public.request_school('gmailu','Gmail University',4,'gmail.com');
+  raise exception 'FAIL: gmail.com requested as a school';
+exception when sqlstate '22023' then raise notice 'ok  a free email provider cannot be requested as a school';
+end $$;
+do $$ begin
+  perform public.request_school('quebec','Quebec',4,'qc.ca');
+  raise exception 'FAIL: qc.ca requested as a school';
+exception when sqlstate '22023' then raise notice 'ok  a shared ending (qc.ca) cannot be requested as a school';
+end $$;
+select pg_temp.check(public.request_school('umontreal','Université de Montréal',4.3,'umontreal.qc.ca') = 'requested',
+  'a real school domain under a shared ending can be requested');
+reset role;
+do $$ begin
+  update public.schools set email_domains = array_append(email_domains, 'outlook.com') where slug = 'uottawa';
+  raise exception 'FAIL: admin added outlook.com to a school';
+exception when check_violation then raise notice 'ok  a free email provider cannot be added to a school by hand';
+end $$;
 \echo ALL DATABASE TESTS PASSED

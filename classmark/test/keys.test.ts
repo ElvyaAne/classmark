@@ -4,6 +4,8 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { findSecretKeys, secretKeyProblem } from "../src/keys.ts";
 
+// Built from pieces so the repo scan below doesn't flag this file's own examples.
+const secret = (rest: string) => "sb_" + "secret_" + rest;
 const jwt = (claims: object) => `eyJhbGciOiJIUzI1NiJ9.${Buffer.from(JSON.stringify(claims)).toString("base64url")}.c2ln`;
 
 test("public keys pass, secret keys are caught", () => {
@@ -11,12 +13,12 @@ test("public keys pass, secret keys are caught", () => {
   assert.equal(secretKeyProblem("sb_publishable_abc123"), null);
   assert.equal(secretKeyProblem(""), null);
   assert.match(secretKeyProblem(jwt({ iss: "supabase", role: "service_role" }))!, /service_role/);
-  assert.match(secretKeyProblem("sb_secret_abc123")!, /secret/);
+  assert.match(secretKeyProblem(secret("abc123"))!, /secret/);
 });
 
 test("secret keys are found inside text", () => {
   assert.deepEqual(findSecretKeys(`anon: ${jwt({ role: "anon" })}`), []);
-  assert.equal(findSecretKeys(`SUPABASE_KEY=${jwt({ role: "service_role" })}\nother=sb_secret_xyz`).length, 2);
+  assert.equal(findSecretKeys(`SUPABASE_KEY=${jwt({ role: "service_role" })}\nother=${secret("xyz")}`).length, 2);
 });
 
 test("no secret Supabase key is committed anywhere in the repo", () => {
